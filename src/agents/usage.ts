@@ -1,10 +1,14 @@
+/**
+ * Token 用量统计与报告
+ *
+ * 定义各 provider/SDK 的用量字段兼容类型、归一化用量、助手轮次用量快照与成本计算。
+ */
 export type UsageLike = {
   input?: number;
   output?: number;
   cacheRead?: number;
   cacheWrite?: number;
   total?: number;
-  // Common alternates across providers/SDKs.
   inputTokens?: number;
   outputTokens?: number;
   promptTokens?: number;
@@ -15,11 +19,8 @@ export type UsageLike = {
   completion_tokens?: number;
   cache_read_input_tokens?: number;
   cache_creation_input_tokens?: number;
-  // Moonshot/Kimi uses cached_tokens for cache read count (explicit caching API).
   cached_tokens?: number;
-  // Kimi K2 uses prompt_tokens_details.cached_tokens for automatic prefix caching.
   prompt_tokens_details?: { cached_tokens?: number };
-  // Some agents/logs emit alternate naming.
   totalTokens?: number;
   total_tokens?: number;
   cache_read?: number;

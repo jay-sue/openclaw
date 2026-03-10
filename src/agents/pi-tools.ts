@@ -1,3 +1,10 @@
+/**
+ * 工具链总装配（Pi 嵌入式代理）
+ *
+ * 组合 pi-coding-agent 的 read/write/edit、bash-tools 的 exec/process、
+ * openclaw-tools 高层工具，再经多层策略过滤（profile/agent/group/sandbox/subagent）、
+ * 消息/model provider 策略、owner-only、schema 归一化与 before-tool-call/abort 包装后返回。
+ */
 import { codingTools, createReadTool, readTool } from "@mariozechner/pi-coding-agent";
 import type { OpenClawConfig } from "../config/config.js";
 import type { ToolLoopDetectionConfig } from "../config/types.tools.js";
@@ -64,10 +71,13 @@ function isOpenAIProvider(provider?: string) {
   return normalized === "openai" || normalized === "openai-codex";
 }
 
+/** 按消息通道禁止的工具：如 voice 通道禁用 tts */
 const TOOL_DENY_BY_MESSAGE_PROVIDER: Readonly<Record<string, readonly string[]>> = {
   voice: ["tts"],
 };
+/** xAI/Grok 自带 web_search，与 OpenClaw 的 web_search 同名会冲突，故在 xAI 下移除 */
 const TOOL_DENY_FOR_XAI_PROVIDERS = new Set(["web_search"]);
+/** memory 触发时仅允许 read/write，write 会包装为仅追加到指定路径 */
 const MEMORY_FLUSH_ALLOWED_TOOL_NAMES = new Set(["read", "write"]);
 
 function normalizeMessageProvider(messageProvider?: string): string | undefined {
@@ -98,8 +108,6 @@ function applyModelProviderToolPolicy(
   if (!isXaiProvider(params?.modelProvider, params?.modelId)) {
     return tools;
   }
-  // xAI/Grok providers expose a native web_search tool; sending OpenClaw's
-  // web_search alongside it causes duplicate-name request failures.
   return tools.filter((tool) => !TOOL_DENY_FOR_XAI_PROVIDERS.has(tool.name));
 }
 
@@ -276,6 +284,8 @@ export function createOpenClawCodingTools(options?: {
     throw new Error("memoryFlushWritePath required for memory-triggered tool runs");
   }
   const memoryFlushWritePath = isMemoryFlushRun ? options.memoryFlushWritePath : undefined;
+
+  // 解析各层工具策略（profile/agent/group/sandbox/subagent），用于后续 allowlist 与 pipeline
   const {
     agentId,
     globalPolicy,
@@ -315,8 +325,7 @@ export function createOpenClawCodingTools(options?: {
     providerProfilePolicy,
     providerProfileAlsoAllow,
   );
-  // Prefer sessionKey for process isolation scope to prevent cross-session process visibility/killing.
-  // Fallback to agentId if no sessionKey is available (e.g. legacy or global contexts).
+  // 进程隔离范围：优先用 sessionKey 避免跨会话看到/杀进程，无 sessionKey 时用 agentId
   const scopeKey =
     options?.exec?.scopeKey ?? options?.sessionKey ?? (agentId ? `agent:${agentId}` : undefined);
   const subagentPolicy =
@@ -348,8 +357,7 @@ export function createOpenClawCodingTools(options?: {
   const workspaceRoot = resolveWorkspaceRoot(options?.workspaceDir);
   const workspaceOnly = fsPolicy.workspaceOnly;
   const applyPatchConfig = execConfig.applyPatch;
-  // Secure by default: apply_patch is workspace-contained unless explicitly disabled.
-  // (tools.fs.workspaceOnly is a separate umbrella flag for read/write/edit/apply_patch.)
+  // apply_patch 默认限制在工作区内，除非配置显式关闭；且需 OpenAI 且 allowModels 通过才启用
   const applyPatchWorkspaceOnly = workspaceOnly || applyPatchConfig?.workspaceOnly !== false;
   const applyPatchEnabled =
     !!applyPatchConfig?.enabled &&
@@ -365,6 +373,7 @@ export function createOpenClawCodingTools(options?: {
   }
   const imageSanitization = resolveImageSanitizationLimits(options?.config);
 
+  // 基于 pi-coding-agent 的 codingTools：read 按沙箱/宿主机分叉并加 workspace 守卫，write/edit 同理；bash/exec 此处先不加入，后面单独创建
   const base = (codingTools as unknown as AnyAgentTool[]).flatMap((tool) => {
     if (tool.name === readTool.name) {
       if (sandboxRoot) {
@@ -409,6 +418,7 @@ export function createOpenClawCodingTools(options?: {
     return [tool];
   });
   const { cleanupMs: cleanupMsOverride, ...execDefaults } = options?.exec ?? {};
+  // exec：合并 options.exec 与 resolveExecConfig，注入 scopeKey、sandbox、cwd 等
   const execTool = createExecTool({
     ...execDefaults,
     host: options?.exec?.host ?? execConfig.host,
@@ -448,6 +458,7 @@ export function createOpenClawCodingTools(options?: {
     cleanupMs: cleanupMsOverride ?? execConfig.cleanupMs,
     scopeKey,
   });
+  // apply_patch 仅在启用且（无沙箱或沙箱可写）时创建
   const applyPatchTool =
     !applyPatchEnabled || (sandboxRoot && !allowWorkspaceWrites)
       ? null
@@ -459,6 +470,7 @@ export function createOpenClawCodingTools(options?: {
               : undefined,
           workspaceOnly: applyPatchWorkspaceOnly,
         });
+  // 组装：base + 沙箱下的 edit/write（若可写）+ apply_patch + exec + process + 通道工具 + openclaw 高层工具
   const tools: AnyAgentTool[] = [
     ...base,
     ...(sandboxRoot
@@ -488,7 +500,6 @@ export function createOpenClawCodingTools(options?: {
     ...(applyPatchTool ? [applyPatchTool as unknown as AnyAgentTool] : []),
     execTool as unknown as AnyAgentTool,
     processTool as unknown as AnyAgentTool,
-    // Channel docking: include channel-defined agent tools (login, etc.).
     ...listChannelAgentTools({ cfg: options?.config }),
     ...createOpenClawTools({
       sandboxBrowserBridgeUrl: sandbox?.browser?.bridgeUrl,
@@ -536,6 +547,7 @@ export function createOpenClawCodingTools(options?: {
       sessionId: options?.sessionId,
     }),
   ];
+  // memory 触发时只保留 read/write，且 write 包装为仅向 memoryFlushWritePath 追加
   const toolsForMemoryFlush =
     isMemoryFlushRun && memoryFlushWritePath
       ? tools.flatMap((tool) => {
@@ -566,9 +578,10 @@ export function createOpenClawCodingTools(options?: {
     modelProvider: options?.modelProvider,
     modelId: options?.modelId,
   });
-  // Security: treat unknown/undefined as unauthorized (opt-in, not opt-out)
+  // 未显式传 senderIsOwner 视为非 owner，仅允许列表内工具（opt-in）
   const senderIsOwner = options?.senderIsOwner === true;
   const toolsByAuthorization = applyOwnerOnlyToolPolicy(toolsForModelProvider, senderIsOwner);
+  // 策略管道：profile → agent → group → sandbox → subagent 依次过滤
   const subagentFiltered = applyToolPolicyPipeline({
     tools: toolsByAuthorization,
     toolMeta: (tool) => getPluginToolMeta(tool),
@@ -590,9 +603,7 @@ export function createOpenClawCodingTools(options?: {
       { policy: subagentPolicy, label: "subagent tools.allow" },
     ],
   });
-  // Always normalize tool JSON Schemas before handing them to pi-agent/pi-ai.
-  // Without this, some providers (notably OpenAI) will reject root-level union schemas.
-  // Provider-specific cleaning: Gemini needs constraint keywords stripped, but Anthropic expects them.
+  // 交给 pi-agent/pi-ai 前统一做 schema 归一化（如去掉 root-level union），并按 provider 做 Gemini 等清理
   const normalized = subagentFiltered.map((tool) =>
     normalizeToolParameters(tool, {
       modelProvider: options?.modelProvider,
@@ -612,8 +623,5 @@ export function createOpenClawCodingTools(options?: {
     ? withHooks.map((tool) => wrapToolWithAbortSignal(tool, options.abortSignal))
     : withHooks;
 
-  // NOTE: Keep canonical (lowercase) tool names here.
-  // pi-ai's Anthropic OAuth transport remaps tool names to Claude Code-style names
-  // on the wire and maps them back for tool dispatch.
   return withAbort;
 }

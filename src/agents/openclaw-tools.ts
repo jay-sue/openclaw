@@ -1,3 +1,9 @@
+/**
+ * OpenClaw 高层工具注册
+ *
+ * 创建并返回消息、会话、Web、子代理、网关、浏览器、Canvas、Cron、TTS、PDF、图片等工具实例；
+ * 根据 options（沙箱、会话、通道、allowlist 等）决定启用哪些工具，最后合并插件工具并返回。
+ */
 import type { OpenClawConfig } from "../config/config.js";
 import { resolvePluginTools } from "../plugins/tools.js";
 import { getActiveRuntimeWebToolsMetadata } from "../secrets/runtime.js";
@@ -26,6 +32,9 @@ import { createTtsTool } from "./tools/tts-tool.js";
 import { createWebFetchTool, createWebSearchTool } from "./tools/web-tools.js";
 import { resolveWorkspaceRoot } from "./workspace-dir.js";
 
+/**
+ * 根据当前会话/沙箱/通道等上下文创建 OpenClaw 高层工具列表，并合并插件 allowlist 过滤后的插件工具。
+ */
 export function createOpenClawTools(
   options?: {
     sandboxBrowserBridgeUrl?: string;
@@ -84,6 +93,7 @@ export function createOpenClawTools(
     options?.spawnWorkspaceDir ?? options?.workspaceDir,
   );
   const runtimeWebTools = getActiveRuntimeWebToolsMetadata();
+  // 有 agentDir 时才创建 image/pdf 工具（需要本地路径与沙箱）
   const imageTool = options?.agentDir?.trim()
     ? createImageTool({
         config: options?.config,
@@ -135,6 +145,7 @@ export function createOpenClawTools(
         requireExplicitTarget: options?.requireExplicitMessageTarget,
         requesterSenderId: options?.requesterSenderId ?? undefined,
       });
+  // 固定工具集合：browser、canvas、nodes、cron、message、tts、gateway、agents-list、sessions-*、subagents、session-status、web 搜索/抓取、image、pdf（按条件加入）
   const tools: AnyAgentTool[] = [
     createBrowserTool({
       sandboxBridgeUrl: options?.sandboxBrowserBridgeUrl,
@@ -207,6 +218,7 @@ export function createOpenClawTools(
     ...(pdfTool ? [pdfTool] : []),
   ];
 
+  // 插件工具：按 pluginToolAllowlist 过滤，且不与现有工具名冲突
   const pluginTools = resolvePluginTools({
     context: {
       config: options?.config,
