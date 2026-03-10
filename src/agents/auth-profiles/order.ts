@@ -1,3 +1,10 @@
+/**
+ * 认证 Profile 排序与轮询
+ *
+ * 按配置/存储的显式排序或自动发现确定使用顺序；支持 eligibility 过滤、
+ * 冷却 profile 排末尾、round-robin（类型优先级 oauth > token > api_key，同类型按 lastUsed 最旧优先）、
+ * preferredProfile 优先。
+ */
 import type { OpenClawConfig } from "../../config/config.js";
 import {
   findNormalizedProviderValue,
@@ -27,6 +34,7 @@ export type AuthProfileEligibility = {
   reasonCode: AuthProfileEligibilityReasonCode;
 };
 
+/** 判断某 profile 对某 provider 是否可用：profile 存在、provider 一致、配置 mode 与凭据 type 兼容、凭据本身 eligible */
 export function resolveAuthProfileEligibility(params: {
   cfg?: OpenClawConfig;
   store: AuthProfileStore;
@@ -64,6 +72,9 @@ export function resolveAuthProfileEligibility(params: {
   };
 }
 
+/**
+ * 解析某 provider 的 profile 使用顺序：先清过期冷却，再取显式排序或自动发现，过滤 eligible，冷却排末尾，支持 preferredProfile 置顶。
+ */
 export function resolveAuthProfileOrder(params: {
   cfg?: OpenClawConfig;
   store: AuthProfileStore;
@@ -75,9 +86,6 @@ export function resolveAuthProfileOrder(params: {
   const providerAuthKey = normalizeProviderIdForAuth(provider);
   const now = Date.now();
 
-  // Clear any cooldowns that have expired since the last check so profiles
-  // get a fresh error count and are not immediately re-penalized on the
-  // next transient failure. See #3604.
   clearExpiredCooldowns(store, now);
   const storedOrder = findNormalizedProviderValue(store.order, providerKey);
   const configuredOrder = findNormalizedProviderValue(cfg?.auth?.order, providerKey);
@@ -104,9 +112,7 @@ export function resolveAuthProfileOrder(params: {
     }).eligible;
   let filtered = baseOrder.filter(isValidProfile);
 
-  // Repair config/store profile-id drift from older onboarding flows:
-  // if configured profile ids no longer exist in auth-profiles.json, scan the
-  // provider's stored credentials and use any valid entries.
+  // 配置中的 profileId 在 store 中不存在时，用该 provider 下存储的合法 profile 补全（修复旧引导流程漂移）
   const allBaseProfilesMissing = baseOrder.every((profileId) => !store.profiles[profileId]);
   if (filtered.length === 0 && explicitProfiles.length > 0 && allBaseProfilesMissing) {
     const storeProfiles = listProfilesForProvider(store, provider);
@@ -115,12 +121,7 @@ export function resolveAuthProfileOrder(params: {
 
   const deduped = dedupeProfileIds(filtered);
 
-  // If user specified explicit order (store override or config), respect it
-  // exactly, but still apply cooldown sorting to avoid repeatedly selecting
-  // known-bad/rate-limited keys as the first candidate.
   if (explicitOrder && explicitOrder.length > 0) {
-    // ...but still respect cooldown tracking to avoid repeatedly selecting a
-    // known-bad/rate-limited key as the first candidate.
     const available: string[] = [];
     const inCooldown: Array<{ profileId: string; cooldownUntil: number }> = [];
 
@@ -140,16 +141,12 @@ export function resolveAuthProfileOrder(params: {
 
     const ordered = [...available, ...cooldownSorted];
 
-    // Still put preferredProfile first if specified
     if (preferredProfile && ordered.includes(preferredProfile)) {
       return [preferredProfile, ...ordered.filter((e) => e !== preferredProfile)];
     }
     return ordered;
   }
 
-  // Otherwise, use round-robin: sort by lastUsed (oldest first)
-  // preferredProfile goes first if specified (for explicit user choice)
-  // lastGood is NOT prioritized - that would defeat round-robin
   const sorted = orderProfilesByMode(deduped, store);
 
   if (preferredProfile && sorted.includes(preferredProfile)) {
@@ -159,10 +156,10 @@ export function resolveAuthProfileOrder(params: {
   return sorted;
 }
 
+/** 按类型偏好（oauth > token > api_key）与 lastUsed 最旧优先排序，冷却中的排到末尾并按冷却到期时间排序 */
 function orderProfilesByMode(order: string[], store: AuthProfileStore): string[] {
   const now = Date.now();
 
-  // Partition into available and in-cooldown
   const available: string[] = [];
   const inCooldown: string[] = [];
 
@@ -174,7 +171,6 @@ function orderProfilesByMode(order: string[], store: AuthProfileStore): string[]
     }
   }
 
-  // Sort available profiles by type preference, then by lastUsed (oldest first = round-robin within type)
   const scored = available.map((profileId) => {
     const type = store.profiles[profileId]?.type;
     const typeScore = type === "oauth" ? 0 : type === "token" ? 1 : type === "api_key" ? 2 : 3;
@@ -182,20 +178,15 @@ function orderProfilesByMode(order: string[], store: AuthProfileStore): string[]
     return { profileId, typeScore, lastUsed };
   });
 
-  // Primary sort: type preference (oauth > token > api_key).
-  // Secondary sort: lastUsed (oldest first for round-robin within type).
   const sorted = scored
     .toSorted((a, b) => {
-      // First by type (oauth > token > api_key)
       if (a.typeScore !== b.typeScore) {
         return a.typeScore - b.typeScore;
       }
-      // Then by lastUsed (oldest first)
       return a.lastUsed - b.lastUsed;
     })
     .map((entry) => entry.profileId);
 
-  // Append cooldown profiles at the end (sorted by cooldown expiry, soonest first)
   const cooldownSorted = inCooldown
     .map((profileId) => ({
       profileId,

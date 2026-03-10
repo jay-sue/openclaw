@@ -1,3 +1,10 @@
+/**
+ * 认证存储核心读写层
+ *
+ * 负责加载/解析/保存 auth-profiles.json，兼容旧版 auth.json 自动迁移，
+ * 运行时内存快照、主代理与子代理存储合并、带文件锁的原子更新；
+ * 保存时自动清除明文密钥（仅保留 keyRef/tokenRef）。
+ */
 import fs from "node:fs";
 import type { OAuthCredentials } from "@mariozechner/pi-ai";
 import { resolveOAuthPath } from "../../config/paths.js";
@@ -8,7 +15,9 @@ import { syncExternalCliCredentials } from "./external-cli-sync.js";
 import { ensureAuthStoreFile, resolveAuthStorePath, resolveLegacyAuthStorePath } from "./paths.js";
 import type { AuthProfileCredential, AuthProfileStore, ProfileUsageStats } from "./types.js";
 
+/** 旧版 auth.json 的存储结构：key -> 凭据 */
 type LegacyAuthStore = Record<string, AuthProfileCredential>;
+/** 解析凭据条目时的拒绝原因 */
 type CredentialRejectReason = "non_object" | "invalid_type" | "missing_provider";
 type RejectedCredentialEntry = { key: string; reason: CredentialRejectReason };
 type LoadAuthProfileStoreOptions = {
@@ -18,6 +27,7 @@ type LoadAuthProfileStoreOptions = {
 
 const AUTH_PROFILE_TYPES = new Set<AuthProfileCredential["type"]>(["api_key", "oauth", "token"]);
 
+/** 运行时内存中的存储快照（按 agentDir 对应路径为 key） */
 const runtimeAuthStoreSnapshots = new Map<string, AuthProfileStore>();
 
 function resolveRuntimeStoreKey(agentDir?: string): string {
@@ -28,6 +38,10 @@ function cloneAuthProfileStore(store: AuthProfileStore): AuthProfileStore {
   return structuredClone(store);
 }
 
+/**
+ * 从运行时快照解析存储：无 agentDir 或与主代理同路径时返回主快照；
+ * 否则合并主代理与子代理存储（子代理覆盖主代理同 key）。
+ */
 function resolveRuntimeAuthProfileStore(agentDir?: string): AuthProfileStore | null {
   if (runtimeAuthStoreSnapshots.size === 0) {
     return null;
@@ -61,6 +75,7 @@ function resolveRuntimeAuthProfileStore(agentDir?: string): AuthProfileStore | n
   return null;
 }
 
+/** 用给定条目替换运行时存储快照（用于测试或一次性注入） */
 export function replaceRuntimeAuthProfileStoreSnapshots(
   entries: Array<{ agentDir?: string; store: AuthProfileStore }>,
 ): void {
@@ -73,10 +88,12 @@ export function replaceRuntimeAuthProfileStoreSnapshots(
   }
 }
 
+/** 清空运行时存储快照 */
 export function clearRuntimeAuthProfileStoreSnapshots(): void {
   runtimeAuthStoreSnapshots.clear();
 }
 
+/** 在文件锁下执行 store 更新：若 updater 返回 true 则写回磁盘，返回更新后的 store 或 null */
 export async function updateAuthProfileStoreWithLock(params: {
   agentDir?: string;
   updater: (store: AuthProfileStore) => boolean;
@@ -99,21 +116,14 @@ export async function updateAuthProfileStoreWithLock(params: {
 }
 
 /**
- * Normalise a raw auth-profiles.json credential entry.
- *
- * The official format uses `type` and (for api_key credentials) `key`.
- * A common mistake — caused by the similarity with the `openclaw.json`
- * `auth.profiles` section which uses `mode` — is to write `mode` instead of
- * `type` and `apiKey` instead of `key`.  Accept both spellings so users don't
- * silently lose their credentials.
+ * 归一化原始 auth-profiles.json 中的凭据条目。
+ * 官方格式使用 type 与 key；用户常误写成 openclaw.json 里的 mode / apiKey，此处兼容两种写法。
  */
 function normalizeRawCredentialEntry(raw: Record<string, unknown>): Partial<AuthProfileCredential> {
   const entry = { ...raw } as Record<string, unknown>;
-  // mode → type alias (openclaw.json uses "mode"; auth-profiles.json uses "type")
   if (!("type" in entry) && typeof entry["mode"] === "string") {
     entry["type"] = entry["mode"];
   }
-  // apiKey → key alias for ApiKeyCredential
   if (!("key" in entry) && typeof entry["apiKey"] === "string") {
     entry["key"] = entry["apiKey"];
   }
@@ -163,6 +173,7 @@ function warnRejectedCredentialEntries(source: string, rejected: RejectedCredent
   });
 }
 
+/** 将旧版 auth.json 原始内容强制解析为 LegacyAuthStore；若已是新格式（含 profiles）则返回 null */
 function coerceLegacyStore(raw: unknown): LegacyAuthStore | null {
   if (!raw || typeof raw !== "object") {
     return null;
@@ -276,6 +287,7 @@ function mergeAuthProfileStores(
   };
 }
 
+/** 将独立 OAuth 文件中的凭据合并进 store，仅当 profileId 不存在时写入；返回是否有变更 */
 function mergeOAuthFileIntoStore(store: AuthProfileStore): boolean {
   const oauthPath = resolveOAuthPath();
   const oauthRaw = loadJsonFile(oauthPath);
@@ -302,6 +314,7 @@ function mergeOAuthFileIntoStore(store: AuthProfileStore): boolean {
   return mutated;
 }
 
+/** 将旧版 auth.json 解析结果应用到 store，按 provider 生成 profileId `${provider}:default` */
 function applyLegacyStore(store: AuthProfileStore, legacy: LegacyAuthStore): void {
   for (const [provider, cred] of Object.entries(legacy)) {
     const profileId = `${provider}:default`;
@@ -343,11 +356,11 @@ function loadCoercedStore(authPath: string): AuthProfileStore | null {
   return coerceAuthStore(raw);
 }
 
+/** 加载主代理认证存储：优先新格式，否则从 auth.json 迁移并写回；每次加载都会尝试同步外部 CLI 凭据 */
 export function loadAuthProfileStore(): AuthProfileStore {
   const authPath = resolveAuthStorePath();
   const asStore = loadCoercedStore(authPath);
   if (asStore) {
-    // Sync from external CLI tools on every load.
     const synced = syncExternalCliCredentials(asStore);
     if (synced) {
       saveJsonFile(authPath, asStore);
@@ -388,7 +401,7 @@ function loadAuthProfileStoreForAgent(
     return asStore;
   }
 
-  // Fallback: inherit auth-profiles from main agent if subagent has none
+  // 子代理无本地存储时，从主代理继承并写入子代理目录
   if (agentDir && !readOnly) {
     const mainAuthPath = resolveAuthStorePath(); // without agentDir = main
     const mainRaw = loadJsonFile(mainAuthPath);
@@ -420,9 +433,7 @@ function loadAuthProfileStoreForAgent(
     saveJsonFile(authPath, store);
   }
 
-  // PR #368: legacy auth.json could get re-migrated from other agent dirs,
-  // overwriting fresh OAuth creds with stale tokens (fixes #363). Delete only
-  // after we've successfully written auth-profiles.json.
+  // 仅在成功写入 auth-profiles.json 后再删除旧版 auth.json，避免其他 agent 目录的旧文件覆盖新 OAuth
   if (shouldWrite && legacy !== null) {
     const legacyPath = resolveLegacyAuthStorePath(agentDir);
     try {
@@ -440,6 +451,7 @@ function loadAuthProfileStoreForAgent(
   return store;
 }
 
+/** 加载用于运行时的存储：子代理会与主代理存储合并后返回 */
 export function loadAuthProfileStoreForRuntime(
   agentDir?: string,
   options?: LoadAuthProfileStoreOptions,
@@ -455,10 +467,12 @@ export function loadAuthProfileStoreForRuntime(
   return mergeAuthProfileStores(mainStore, store);
 }
 
+/** 仅用于密钥解析的运行时加载：只读、不触发 keychain 提示 */
 export function loadAuthProfileStoreForSecretsRuntime(agentDir?: string): AuthProfileStore {
   return loadAuthProfileStoreForRuntime(agentDir, { readOnly: true, allowKeychainPrompt: false });
 }
 
+/** 优先从运行时快照取存储；无快照则从磁盘加载，子代理与主代理合并 */
 export function ensureAuthProfileStore(
   agentDir?: string,
   options?: { allowKeychainPrompt?: boolean },
@@ -481,6 +495,7 @@ export function ensureAuthProfileStore(
   return merged;
 }
 
+/** 将 store 写入磁盘；若同时存在 keyRef/key 或 tokenRef/token 则保存时去掉明文 key/token */
 export function saveAuthProfileStore(store: AuthProfileStore, agentDir?: string): void {
   const authPath = resolveAuthStorePath(agentDir);
   const profiles = Object.fromEntries(

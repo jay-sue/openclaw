@@ -1,3 +1,9 @@
+/**
+ * 外部 CLI 凭据同步
+ *
+ * 从外部 CLI（Qwen Code CLI、MiniMax CLI）同步 OAuth 凭据到 store；
+ * 本地凭据缺失或临近过期时更新，带 TTL 缓存。
+ */
 import {
   readQwenCliCredentialsCached,
   readMiniMaxCliCredentialsCached,
@@ -11,6 +17,7 @@ import {
 } from "./constants.js";
 import type { AuthProfileCredential, AuthProfileStore, OAuthCredential } from "./types.js";
 
+/** 浅比较两个 OAuth 凭据是否一致（provider/access/refresh/expires 等） */
 function shallowEqualOAuthCredentials(a: OAuthCredential | undefined, b: OAuthCredential): boolean {
   if (!a) {
     return false;
@@ -30,6 +37,7 @@ function shallowEqualOAuthCredentials(a: OAuthCredential | undefined, b: OAuthCr
   );
 }
 
+/** 判断外部 CLI 对应 profile 是否仍“新鲜”（未临近过期） */
 function isExternalProfileFresh(cred: AuthProfileCredential | undefined, now: number): boolean {
   if (!cred) {
     return false;
@@ -46,7 +54,7 @@ function isExternalProfileFresh(cred: AuthProfileCredential | undefined, now: nu
   return cred.expires > now + EXTERNAL_CLI_NEAR_EXPIRY_MS;
 }
 
-/** Sync external CLI credentials into the store for a given provider. */
+/** 将指定 provider 的外部 CLI 凭据同步进 store；有更新返回 true */
 function syncExternalCliCredentialsForProvider(
   store: AuthProfileStore,
   profileId: string,
@@ -82,9 +90,8 @@ function syncExternalCliCredentialsForProvider(
 }
 
 /**
- * Sync OAuth credentials from external CLI tools (Qwen Code CLI, MiniMax CLI) into the store.
- *
- * Returns true if any credentials were updated.
+ * 从外部 CLI（Qwen Code CLI、MiniMax CLI）同步 OAuth 凭据到 store。
+ * @returns 是否有任意凭据被更新
  */
 export function syncExternalCliCredentials(store: AuthProfileStore): boolean {
   let mutated = false;

@@ -1,3 +1,9 @@
+/**
+ * OAuth 与凭据解析
+ *
+ * 按类型（api_key/token/oauth）解析 API Key，支持 SecretRef 解引用、OAuth token 过期自动刷新（带文件锁）、
+ * 子代理继承主代理凭据、Codex refresh 降级、legacy profile ID fallback。
+ */
 import type { OAuthCredentials, OAuthProvider } from "@mariozechner/pi-ai";
 import { getOAuthApiKey, getOAuthProviders } from "@mariozechner/pi-ai";
 import { loadConfig, type OpenClawConfig } from "../../config/config.js";
@@ -23,7 +29,7 @@ const isOAuthProvider = (provider: string): provider is OAuthProvider =>
 const resolveOAuthProvider = (provider: string): OAuthProvider | null =>
   isOAuthProvider(provider) ? provider : null;
 
-/** Bearer-token auth modes that are interchangeable (oauth tokens and raw tokens). */
+/** 可互换的 bearer 认证模式：oauth 与 token 均走 bearer token 路径 */
 const BEARER_AUTH_MODES = new Set(["oauth", "token"]);
 
 const isCompatibleModeType = (mode: string | undefined, type: string | undefined): boolean => {

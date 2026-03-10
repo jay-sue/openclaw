@@ -1,3 +1,9 @@
+/**
+ * 认证 Profile 失败状态观测
+ *
+ * 在 profile 失败状态变更时输出结构化日志（错误计数、冷却/禁用窗口、是否复用已有窗口等），
+ * 对 profileId/runId/provider 做脱敏后写入日志。
+ */
 import { redactIdentifier } from "../../logging/redact-identifier.js";
 import { createSubsystemLogger } from "../../logging/subsystem.js";
 import { sanitizeForConsole } from "../pi-embedded-error-observation.js";
@@ -5,6 +11,9 @@ import type { AuthProfileFailureReason, ProfileUsageStats } from "./types.js";
 
 const observationLog = createSubsystemLogger("agent/embedded");
 
+/**
+ * 记录某 profile 失败状态变更：区分冷却(cooldown)与禁用(disabled)，并标记本次是否复用了已有窗口（未延长）。
+ */
 export function logAuthProfileFailureStateChange(params: {
   runId?: string;
   profileId: string;
@@ -14,12 +23,12 @@ export function logAuthProfileFailureStateChange(params: {
   next: ProfileUsageStats;
   now: number;
 }): void {
+  // billing / auth_permanent 使用长周期禁用(disabled)，其余为短周期冷却(cooldown)
   const windowType =
     params.reason === "billing" || params.reason === "auth_permanent" ? "disabled" : "cooldown";
   const previousCooldownUntil = params.previous?.cooldownUntil;
   const previousDisabledUntil = params.previous?.disabledUntil;
-  // Active cooldown/disable windows are intentionally immutable; log whether this
-  // update reused the existing window instead of extending it.
+  // 活跃的冷却/禁用窗口设计上不可变；此处记录本次更新是复用了已有窗口而非延长
   const windowReused =
     windowType === "disabled"
       ? typeof previousDisabledUntil === "number" &&

@@ -1,3 +1,9 @@
+/**
+ * 认证 Profile CRUD 与排序
+ *
+ * 提供 profile 去重、按 provider 设置/清除排序、upsert 凭据（含密钥标准化）、
+ * 按 provider 列出 profile、标记「上次成功」等。
+ */
 import { normalizeStringEntries } from "../../shared/string-normalization.js";
 import { normalizeSecretInput } from "../../utils/normalize-secret-input.js";
 import { normalizeProviderId, normalizeProviderIdForAuth } from "../model-selection.js";
@@ -8,10 +14,12 @@ import {
 } from "./store.js";
 import type { AuthProfileCredential, AuthProfileStore } from "./types.js";
 
+/** 对 profileId 列表去重并保持首次出现顺序 */
 export function dedupeProfileIds(profileIds: string[]): string[] {
   return [...new Set(profileIds)];
 }
 
+/** 设置某 provider 的 profile 排序（存储层）；传空数组会删除该 provider 的 order */
 export async function setAuthProfileOrder(params: {
   agentDir?: string;
   provider: string;
@@ -42,6 +50,7 @@ export async function setAuthProfileOrder(params: {
   });
 }
 
+/** 插入或更新单个 profile；api_key/token 的明文会做标准化，然后写回存储 */
 export function upsertAuthProfile(params: {
   profileId: string;
   credential: AuthProfileCredential;
@@ -63,6 +72,7 @@ export function upsertAuthProfile(params: {
   saveAuthProfileStore(store, params.agentDir);
 }
 
+/** 在文件锁下 upsert 单个 profile，返回更新后的 store 或 null */
 export async function upsertAuthProfileWithLock(params: {
   profileId: string;
   credential: AuthProfileCredential;
@@ -77,6 +87,7 @@ export async function upsertAuthProfileWithLock(params: {
   });
 }
 
+/** 列出某 provider 下所有 profile 的 profileId（按 provider 归一化后匹配） */
 export function listProfilesForProvider(store: AuthProfileStore, provider: string): string[] {
   const providerKey = normalizeProviderIdForAuth(provider);
   return Object.entries(store.profiles)
@@ -84,6 +95,7 @@ export function listProfilesForProvider(store: AuthProfileStore, provider: strin
     .map(([id]) => id);
 }
 
+/** 将某 profile 标记为该 provider 的「上次成功」；优先走锁更新，否则直接改内存并保存 */
 export async function markAuthProfileGood(params: {
   store: AuthProfileStore;
   provider: string;

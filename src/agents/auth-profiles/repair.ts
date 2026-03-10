@@ -1,3 +1,9 @@
+/**
+ * Profile ID 漂移修复
+ *
+ * 当配置仍引用旧版 provider:default 而 store 中已为 OAuth 新 profile 时，
+ * 通过 email/lastGood/命名启发式为 legacy 找到新 profileId，并执行配置迁移。
+ */
 import type { OpenClawConfig } from "../../config/config.js";
 import type { AuthProfileConfig } from "../../config/types.js";
 import { findNormalizedProviderKey, normalizeProviderId } from "../model-selection.js";
@@ -20,6 +26,7 @@ function isEmailLike(value: string): boolean {
   return trimmed.includes("@") && trimmed.includes(".");
 }
 
+/** 为 legacy profileId（如 anthropic:default）建议一个可用的 OAuth profileId：按 email、lastGood、单候选、email 风格后缀 优先级 */
 export function suggestOAuthProfileIdForLegacyDefault(params: {
   cfg?: OpenClawConfig;
   store: AuthProfileStore;
@@ -81,6 +88,7 @@ export function suggestOAuthProfileIdForLegacyDefault(params: {
   return null;
 }
 
+/** 执行 OAuth profile ID 迁移：将配置中 legacyProfileId 替换为建议的新 profileId，并更新 auth.order */
 export function repairOAuthProfileIdMismatch(params: {
   cfg: OpenClawConfig;
   store: AuthProfileStore;

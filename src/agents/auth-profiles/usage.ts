@@ -1,9 +1,16 @@
+/**
+ * 认证 Profile 冷却与使用统计
+ *
+ * 判断冷却/禁用状态、标记成功/失败（指数退避）、清除冷却、清理过期冷却、
+ * 推断不可用原因、获取最早冷却到期时间；billing/auth_permanent 用长周期禁用，其余用短周期冷却。
+ */
 import type { OpenClawConfig } from "../../config/config.js";
 import { normalizeProviderId } from "../model-selection.js";
 import { logAuthProfileFailureStateChange } from "./state-observation.js";
 import { saveAuthProfileStore, updateAuthProfileStoreWithLock } from "./store.js";
 import type { AuthProfileFailureReason, AuthProfileStore, ProfileUsageStats } from "./types.js";
 
+/** 失败原因优先级顺序，用于推断「所有候选均不可用」时的代表原因 */
 const FAILURE_REASON_PRIORITY: AuthProfileFailureReason[] = [
   "auth_permanent",
   "auth",
@@ -20,11 +27,13 @@ const FAILURE_REASON_ORDER = new Map<AuthProfileFailureReason, number>(
   FAILURE_REASON_PRIORITY.map((reason, index) => [reason, index]),
 );
 
+/** 部分 provider（如 openrouter、kilocode）不参与冷却，直接视为可用 */
 function isAuthCooldownBypassedForProvider(provider: string | undefined): boolean {
   const normalized = normalizeProviderId(provider ?? "");
   return normalized === "openrouter" || normalized === "kilocode";
 }
 
+/** 从 stats 得到「不可用截止时间」：取 cooldownUntil/disabledUntil 中有效且最大的时间戳 */
 export function resolveProfileUnusableUntil(
   stats: Pick<ProfileUsageStats, "cooldownUntil" | "disabledUntil">,
 ): number | null {
@@ -37,9 +46,7 @@ export function resolveProfileUnusableUntil(
   return Math.max(...values);
 }
 
-/**
- * Check if a profile is currently in cooldown (due to rate limits, overload, or other transient failures).
- */
+/** 判断某 profile 是否处于冷却中（限流、过载等瞬时失败导致） */
 export function isProfileInCooldown(
   store: AuthProfileStore,
   profileId: string,
@@ -62,10 +69,8 @@ function isActiveUnusableWindow(until: number | undefined, now: number): boolean
 }
 
 /**
- * Infer the most likely reason all candidate profiles are currently unavailable.
- *
- * We prefer explicit active `disabledReason` values (for example billing/auth)
- * over generic cooldown buckets, then fall back to failure-count signals.
+ * 推断「所有候选 profile 均不可用」时最可能的原因。
+ * 优先采用显式的 disabledReason（如 billing/auth），再按 failureCounts 计分。
  */
 export function resolveProfilesUnavailableReason(params: {
   store: AuthProfileStore;
@@ -89,7 +94,6 @@ export function resolveProfilesUnavailableReason(params: {
 
     const disabledActive = isActiveUnusableWindow(stats.disabledUntil, now);
     if (disabledActive && stats.disabledReason && FAILURE_REASON_SET.has(stats.disabledReason)) {
-      // Disabled reasons are explicit and high-signal; weight heavily.
       addScore(stats.disabledReason, 1_000);
       continue;
     }
@@ -136,11 +140,7 @@ export function resolveProfilesUnavailableReason(params: {
   return best;
 }
 
-/**
- * Return the soonest `unusableUntil` timestamp (ms epoch) among the given
- * profiles, or `null` when no profile has a recorded cooldown. Note: the
- * returned timestamp may be in the past if the cooldown has already expired.
- */
+/** 返回给定 profile 中最早的不可用截止时间（毫秒时间戳），无则返回 null；可能已过期 */
 export function getSoonestCooldownExpiry(
   store: AuthProfileStore,
   profileIds: string[],
@@ -163,22 +163,10 @@ export function getSoonestCooldownExpiry(
 }
 
 /**
- * Clear expired cooldowns from all profiles in the store.
- *
- * When `cooldownUntil` or `disabledUntil` has passed, the corresponding fields
- * are removed and error counters are reset so the profile gets a fresh start
- * (circuit-breaker half-open → closed). Without this, a stale `errorCount`
- * causes the *next* transient failure to immediately escalate to a much longer
- * cooldown — the root cause of profiles appearing "stuck" after rate limits.
- *
- * `cooldownUntil` and `disabledUntil` are handled independently: if a profile
- * has both and only one has expired, only that field is cleared.
- *
- * Mutates the in-memory store; disk persistence happens lazily on the next
- * store write (e.g. `markAuthProfileUsed` / `markAuthProfileFailure`), which
- * matches the existing save pattern throughout the auth-profiles module.
- *
- * @returns `true` if any profile was modified.
+ * 清除 store 中已过期的冷却/禁用：过期字段移除并重置错误计数，使 profile 重新参与选择。
+ * 否则陈旧 errorCount 会导致下一次瞬时失败立刻升级为更长冷却（profile 看似「卡住」）。
+ * cooldownUntil 与 disabledUntil 独立处理；仅修改内存，磁盘在下次写入时持久化。
+ * @returns 是否有任意 profile 被修改
  */
 export function clearExpiredCooldowns(store: AuthProfileStore, now?: number): boolean {
   const usageStats = store.usageStats;
@@ -216,9 +204,7 @@ export function clearExpiredCooldowns(store: AuthProfileStore, now?: number): bo
       profileMutated = true;
     }
 
-    // Reset error counters when ALL cooldowns have expired so the profile gets
-    // a fair retry window. Preserves lastFailureAt for the failureWindowMs
-    // decay check in computeNextProfileUsageStats.
+    // 当所有冷却都过期时重置错误计数，保留 lastFailureAt 供 computeNextProfileUsageStats 的 failureWindowMs 衰减用
     if (profileMutated && !resolveProfileUnusableUntil(stats)) {
       stats.errorCount = 0;
       stats.failureCounts = undefined;
@@ -233,10 +219,7 @@ export function clearExpiredCooldowns(store: AuthProfileStore, now?: number): bo
   return mutated;
 }
 
-/**
- * Mark a profile as successfully used. Resets error count and updates lastUsed.
- * Uses store lock to avoid overwriting concurrent usage updates.
- */
+/** 将某 profile 标记为成功使用：重置错误计数并更新 lastUsed；使用文件锁避免并发覆盖 */
 export async function markAuthProfileUsed(params: {
   store: AuthProfileStore;
   profileId: string;
@@ -269,10 +252,11 @@ export async function markAuthProfileUsed(params: {
   saveAuthProfileStore(store, agentDir);
 }
 
+/** 按错误次数计算冷却时长（毫秒）：指数退避，上限 1 小时 */
 export function calculateAuthProfileCooldownMs(errorCount: number): number {
   const normalized = Math.max(1, errorCount);
   return Math.min(
-    60 * 60 * 1000, // 1 hour max
+    60 * 60 * 1000,
     60 * 1000 * 5 ** Math.min(normalized - 1, 3),
   );
 }
@@ -401,12 +385,7 @@ function computeNextProfileUsageStats(params: {
     params.existing.lastFailureAt > 0 &&
     params.now - params.existing.lastFailureAt > windowMs;
 
-  // If the previous cooldown has already expired, reset error counters so the
-  // profile gets a fresh backoff window. clearExpiredCooldowns() does this
-  // in-memory during profile ordering, but the on-disk state may still carry
-  // the old counters when the lock-based updater reads a fresh store. Without
-  // this check, stale error counts from an expired cooldown cause the next
-  // failure to escalate to a much longer cooldown (e.g. 1 min → 25 min).
+  // 若上一轮冷却已过期则重置错误计数，避免磁盘上残留的旧计数导致下一次失败直接升级为很长冷却
   const unusableUntil = resolveProfileUnusableUntil(params.existing);
   const previousCooldownExpired = typeof unusableUntil === "number" && params.now >= unusableUntil;
 
@@ -430,8 +409,6 @@ function computeNextProfileUsageStats(params: {
       baseMs: params.cfgResolved.billingBackoffMs,
       maxMs: params.cfgResolved.billingMaxMs,
     });
-    // Keep active disable windows immutable so retries within the window cannot
-    // extend recovery time indefinitely.
     updatedStats.disabledUntil = keepActiveWindowOrRecompute({
       existingUntil: params.existing.disabledUntil,
       now: params.now,
@@ -440,8 +417,6 @@ function computeNextProfileUsageStats(params: {
     updatedStats.disabledReason = params.reason;
   } else {
     const backoffMs = calculateAuthProfileCooldownMs(nextErrorCount);
-    // Keep active cooldown windows immutable so retries within the window
-    // cannot push recovery further out.
     updatedStats.cooldownUntil = keepActiveWindowOrRecompute({
       existingUntil: params.existing.cooldownUntil,
       now: params.now,
@@ -452,11 +427,7 @@ function computeNextProfileUsageStats(params: {
   return updatedStats;
 }
 
-/**
- * Mark a profile as failed for a specific reason. Billing and permanent-auth
- * failures are treated as "disabled" (longer backoff) vs the regular cooldown
- * window.
- */
+/** 按指定原因标记 profile 失败：billing/auth_permanent 走长周期禁用，其余走普通冷却 */
 export async function markAuthProfileFailure(params: {
   store: AuthProfileStore;
   profileId: string;
@@ -547,11 +518,7 @@ export async function markAuthProfileFailure(params: {
   });
 }
 
-/**
- * Mark a profile as transiently failed. Applies exponential backoff cooldown.
- * Cooldown times: 1min, 5min, 25min, max 1 hour.
- * Uses store lock to avoid overwriting concurrent usage updates.
- */
+/** 将 profile 标记为瞬时失败，应用指数退避冷却（1min/5min/25min/最大 1h）；使用文件锁 */
 export async function markAuthProfileCooldown(params: {
   store: AuthProfileStore;
   profileId: string;
@@ -567,10 +534,7 @@ export async function markAuthProfileCooldown(params: {
   });
 }
 
-/**
- * Clear cooldown for a profile (e.g., manual reset).
- * Uses store lock to avoid overwriting concurrent usage updates.
- */
+/** 清除某 profile 的冷却（如手动重置）；使用文件锁 */
 export async function clearAuthProfileCooldown(params: {
   store: AuthProfileStore;
   profileId: string;

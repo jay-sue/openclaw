@@ -1,3 +1,9 @@
+/**
+ * 会话级认证 Profile 覆盖
+ *
+ * 按会话状态（新会话/压缩次数/冷却）自动选择或轮转 profile；
+ * 支持用户手动指定与自动轮转，持久化到 session store。
+ */
 import type { OpenClawConfig } from "../../config/config.js";
 import { updateSessionStore, type SessionEntry } from "../../config/sessions.js";
 import {
@@ -7,6 +13,7 @@ import {
 } from "../auth-profiles.js";
 import { normalizeProviderId } from "../model-selection.js";
 
+/** 判断某 profileId 是否属于指定 provider（按归一化 provider 比较） */
 function isProfileForProvider(params: {
   provider: string;
   profileId: string;
@@ -19,6 +26,7 @@ function isProfileForProvider(params: {
   return normalizeProviderId(entry.provider) === normalizeProviderId(params.provider);
 }
 
+/** 清除会话上的 auth profile 覆盖并写回 session store */
 export async function clearSessionAuthProfileOverride(params: {
   sessionEntry: SessionEntry;
   sessionStore: Record<string, SessionEntry>;
@@ -38,6 +46,10 @@ export async function clearSessionAuthProfileOverride(params: {
   }
 }
 
+/**
+ * 解析当前会话应使用的 auth profile：校验并清理无效覆盖，按新会话/压缩次数/冷却决定是否轮转，必要时持久化。
+ * @returns 最终使用的 profileId 或 undefined
+ */
 export async function resolveSessionAuthProfileOverride(params: {
   cfg: OpenClawConfig;
   provider: string;
