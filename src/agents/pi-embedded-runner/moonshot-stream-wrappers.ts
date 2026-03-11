@@ -1,3 +1,6 @@
+/**
+ * Moonshot / SiliconFlow 流式封装：thinking 开关与 payload 映射、tool_choice 兼容性等。
+ */
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import { streamSimple } from "@mariozechner/pi-ai";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";

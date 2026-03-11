@@ -1,8 +1,12 @@
+/**
+ * 与 think/reasoning 相关的消息处理：识别 assistant 消息、剥离 thinking 块以控制上下文或满足 provider 格式。
+ */
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 
 type AssistantContentBlock = Extract<AgentMessage, { role: "assistant" }>["content"][number];
 type AssistantMessage = Extract<AgentMessage, { role: "assistant" }>;
 
+/** 判断消息是否为带 content 数组的 assistant 消息 */
 export function isAssistantMessageWithContent(message: AgentMessage): message is AssistantMessage {
   return (
     !!message &&

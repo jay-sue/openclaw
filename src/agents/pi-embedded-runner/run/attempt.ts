@@ -1,3 +1,8 @@
+/**
+ * 单次嵌入式尝试：runEmbeddedAttempt。负责写锁、SessionManager 准备、历史加载与轮次限制、
+ * 系统提示与扩展注入、payload 组装、streamFn 选择（OpenAI/Anthropic/Google/Ollama/WS 等）、
+ * 流式订阅与工具执行、压缩重试与超时，返回 EmbeddedRunAttemptResult。
+ */
 import fs from "node:fs/promises";
 import os from "node:os";
 import type { AgentMessage, StreamFn } from "@mariozechner/pi-agent-core";

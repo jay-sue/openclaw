@@ -1,6 +1,11 @@
+/**
+ * pi-embedded-runner 公共类型定义
+ * 定义单次嵌入式运行产生的元数据、结果与压缩/沙箱相关类型。
+ */
 import type { SessionSystemPromptReport } from "../../config/sessions/types.js";
 import type { MessagingToolSend } from "../pi-embedded-messaging.js";
 
+/** 单次运行对应的代理元数据（会话、provider/model、用量、压缩次数等） */
 export type EmbeddedPiAgentMeta = {
   sessionId: string;
   provider: string;
@@ -30,6 +35,7 @@ export type EmbeddedPiAgentMeta = {
   };
 };
 
+/** 单次嵌入式运行的元信息（耗时、agentMeta、中止/错误、stopReason、pendingToolCalls） */
 export type EmbeddedPiRunMeta = {
   durationMs: number;
   agentMeta?: EmbeddedPiAgentMeta;
@@ -54,6 +60,7 @@ export type EmbeddedPiRunMeta = {
   }>;
 };
 
+/** 嵌入式 Pi 代理单次运行的完整返回：payload 列表、meta、以及消息工具/ cron 等附加信息 */
 export type EmbeddedPiRunResult = {
   payloads?: Array<{
     text?: string;
@@ -76,6 +83,7 @@ export type EmbeddedPiRunResult = {
   successfulCronAdds?: number;
 };
 
+/** 会话压缩操作的结果：是否成功、是否发生压缩、原因及详情（摘要、token 前后等） */
 export type EmbeddedPiCompactResult = {
   ok: boolean;
   compacted: boolean;
@@ -89,6 +97,7 @@ export type EmbeddedPiCompactResult = {
   };
 };
 
+/** 嵌入式运行时的沙箱信息（是否启用、工作区路径、浏览器/VNC、提权策略等） */
 export type EmbeddedSandboxInfo = {
   enabled: boolean;
   workspaceDir?: string;

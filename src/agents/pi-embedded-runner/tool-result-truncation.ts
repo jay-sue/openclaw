@@ -1,3 +1,7 @@
+/**
+ * 工具结果截断：单条 tool result 超过上下文预算时进行截断（头+尾或仅头），
+ * 并支持会话级「是否存在超大 tool result」检测与批量截断，用于 context overflow 恢复。
+ */
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { TextContent } from "@mariozechner/pi-ai";
 import { SessionManager } from "@mariozechner/pi-coding-agent";

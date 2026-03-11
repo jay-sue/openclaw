@@ -1,3 +1,6 @@
+/**
+ * Anthropic 流式封装：beta 头、cache retention、工具 payload/schema/tool_choice 的 OpenAI 兼容包装等。
+ */
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import { streamSimple } from "@mariozechner/pi-ai";
 import {

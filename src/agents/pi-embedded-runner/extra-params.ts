@@ -1,3 +1,7 @@
+/**
+ * 按 provider/model 解析并应用「额外流式参数」：从 config 的 agents.defaults.models 与 agent.params
+ * 读取并合并 temperature、maxTokens、cache、reasoning、parallel_tool_calls 等，并包装各 provider 的 streamFn。
+ */
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import type { SimpleStreamOptions } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";
@@ -38,6 +42,7 @@ import {
  *
  * @internal Exported for testing only
  */
+/** 从 config 解析指定 provider/modelId（及可选 agentId）的额外参数字典，供流式调用注入 */
 export function resolveExtraParams(params: {
   cfg: OpenClawConfig | undefined;
   provider: string;

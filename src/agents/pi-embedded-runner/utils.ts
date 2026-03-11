@@ -1,6 +1,10 @@
+/**
+ * pi-embedded-runner 通用工具：think 级别映射、未知错误字符串化，以及类型再导出。
+ */
 import type { ThinkingLevel } from "@mariozechner/pi-agent-core";
 import type { ReasoningLevel, ThinkLevel } from "../../auto-reply/thinking.js";
 
+/** 将 OpenClaw ThinkLevel 映射为 pi-agent-core ThinkingLevel（如 adaptive -> medium） */
 export function mapThinkingLevel(level?: ThinkLevel): ThinkingLevel {
   // pi-agent-core supports "xhigh"; OpenClaw enables it for specific models.
   if (!level) {
@@ -16,6 +20,7 @@ export function mapThinkingLevel(level?: ThinkLevel): ThinkingLevel {
   return level;
 }
 
+/** 将未知类型错误转为可读字符串，用于日志与 failover 信息 */
 export function describeUnknownError(error: unknown): string {
   if (error instanceof Error) {
     return error.message;

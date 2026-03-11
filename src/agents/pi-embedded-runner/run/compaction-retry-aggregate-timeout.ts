@@ -1,6 +1,5 @@
 /**
- * Wait for compaction retry completion with an aggregate timeout to avoid
- * holding a session lane indefinitely when retry resolution is lost.
+ * 在聚合超时内等待压缩重试完成，避免重试卡住时长期占用会话 lane。
  */
 export async function waitForCompactionRetryWithAggregateTimeout(params: {
   waitForCompactionRetry: () => Promise<void>;

@@ -1,3 +1,7 @@
+/**
+ * 模型解析：根据 provider/modelId 从本地目录与配置解析出可用的 Model、AuthStorage、ModelRegistry。
+ * 支持 config 内联 provider、OpenRouter 透传、forward-compat 回退，以及本地 provider（ollama/vllm）的注册提示。
+ */
 import type { Api, Model } from "@mariozechner/pi-ai";
 import type { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
 import type { OpenClawConfig } from "../../config/config.js";
@@ -23,6 +27,7 @@ type InlineProviderConfig = {
   headers?: unknown;
 };
 
+/** 将配置中的 headers 转为键值对，可选剥离 secret-ref 占位符，避免泄露到运行时 */
 function sanitizeModelHeaders(
   headers: unknown,
   opts?: { stripSecretRefMarkers?: boolean },
@@ -110,6 +115,7 @@ function applyConfiguredProviderOverrides(params: {
   };
 }
 
+/** 从 config.models.providers 构建扁平化的内联模型列表，供未在 models.json 中注册的 provider 使用 */
 export function buildInlineProviderModels(
   providers: Record<string, InlineProviderConfig>,
 ): InlineModelEntry[] {
@@ -138,6 +144,7 @@ export function buildInlineProviderModels(
   });
 }
 
+/** 在已有 ModelRegistry 上解析 provider/modelId，优先 registry，其次内联配置、forward-compat、OpenRouter 透传 */
 export function resolveModelWithRegistry(params: {
   provider: string;
   modelId: string;
@@ -236,6 +243,7 @@ export function resolveModelWithRegistry(params: {
   return undefined;
 }
 
+/** 解析模型：发现 AuthStorage 与 ModelRegistry，返回 model + authStorage + modelRegistry，失败时返回 error */
 export function resolveModel(
   provider: string,
   modelId: string,

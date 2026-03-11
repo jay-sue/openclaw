@@ -1,6 +1,12 @@
+/**
+ * 消息字符/ token 估算：对 AgentMessage 或消息列表估算字符数或上下文字符量，
+ * 供 tool-result-context-guard、tool-result-truncation 等做预算与截断。
+ */
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 
+/** 通用文本每 token 约字符数 */
 export const CHARS_PER_TOKEN_ESTIMATE = 4;
+/** 工具结果文本每 token 约字符数（通常更紧凑） */
 export const TOOL_RESULT_CHARS_PER_TOKEN_ESTIMATE = 2;
 const IMAGE_CHAR_ESTIMATE = 8_000;
 
@@ -29,6 +35,7 @@ function estimateUnknownChars(value: unknown): number {
   }
 }
 
+/** 判断消息是否为 tool result 类型（role 或 type 为 toolResult/tool） */
 export function isToolResultMessage(msg: AgentMessage): boolean {
   const role = (msg as { role?: unknown }).role;
   const type = (msg as { type?: unknown }).type;

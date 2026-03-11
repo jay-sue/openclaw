@@ -1,3 +1,7 @@
+/**
+ * Failover 决策观测：创建并调用 failover 决策日志（rotate_profile / fallback_model / surface_error），
+ * 用于诊断认证轮换与 model fallback。
+ */
 import { redactIdentifier } from "../../../logging/redact-identifier.js";
 import type { AuthProfileFailureReason } from "../../auth-profiles.js";
 import {
@@ -35,6 +39,7 @@ export function normalizeFailoverDecisionObservationBase(
   };
 }
 
+/** 创建 failover 决策日志函数，调用时写入带 runId/stage/decision/reason/provider/model 的 warn 日志 */
 export function createFailoverDecisionLogger(
   base: FailoverDecisionLoggerBase,
 ): (

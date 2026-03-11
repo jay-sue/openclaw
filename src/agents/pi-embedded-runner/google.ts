@@ -1,3 +1,7 @@
+/**
+ * Google/Gemini 适配：会话历史与工具 schema 的清洗（sanitizeSessionHistory、sanitizeToolsForGoogle）、
+ * 轮次顺序、图片与 usage 规范化，以及 logToolSchemasForGoogle 诊断。
+ */
 import { EventEmitter } from "node:events";
 import type { AgentMessage, AgentTool } from "@mariozechner/pi-agent-core";
 import type { SessionManager } from "@mariozechner/pi-coding-agent";

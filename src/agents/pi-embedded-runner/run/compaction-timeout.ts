@@ -1,3 +1,6 @@
+/**
+ * 压缩超时信号与快照选择：在 attempt 超时且发生在压缩期间时，决定使用压缩前还是当前消息快照返回。
+ */
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 
 export type CompactionTimeoutSignal = {
@@ -6,6 +9,7 @@ export type CompactionTimeoutSignal = {
   isCompactionInFlight: boolean;
 };
 
+/** 是否应视为「压缩导致的超时」（用于 timedOutDuringCompaction 等） */
 export function shouldFlagCompactionTimeout(signal: CompactionTimeoutSignal): boolean {
   if (!signal.isTimeout) {
     return false;
@@ -27,6 +31,7 @@ export type SnapshotSelection = {
   source: "pre-compaction" | "current";
 };
 
+/** 根据是否在压缩期间超时及是否有压缩前快照，选择返回的消息快照与 sessionId */
 export function selectCompactionTimeoutSnapshot(
   params: SnapshotSelectionParams,
 ): SnapshotSelection {

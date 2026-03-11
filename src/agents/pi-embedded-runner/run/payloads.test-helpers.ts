@@ -1,3 +1,6 @@
+/**
+ * payload 构建测试辅助：封装 buildEmbeddedRunPayloads 默认参数与常用断言（单条文本、工具错误等）。
+ */
 import { expect } from "vitest";
 import { buildEmbeddedRunPayloads } from "./payloads.js";
 

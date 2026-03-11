@@ -1,3 +1,7 @@
+/**
+ * 为单次运行准备 SessionManager：修正「文件存在但尚无 assistant 消息时不会持久化首条 user」等行为，
+ * 确保首条 user prompt 在首条 assistant 之前写入会话文件。
+ */
 import fs from "node:fs/promises";
 
 type SessionHeaderEntry = { type: "session"; id?: string; cwd?: string };
@@ -13,6 +17,7 @@ type SessionMessageEntry = { type: "message"; message?: { role?: string } };
  * This normalizes the file/session state so the first user prompt is persisted before the first
  * assistant entry, even for pre-created session files.
  */
+/** 在 run 开始前规范化 SessionManager 的 sessionId、fileEntries、flushed 等，保证首条 user 先持久化 */
 export async function prepareSessionManagerForRun(params: {
   sessionManager: unknown;
   sessionFile: string;

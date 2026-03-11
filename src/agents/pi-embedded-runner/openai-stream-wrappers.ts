@@ -1,3 +1,6 @@
+/**
+ * OpenAI 流式封装：服务层级、默认传输、context store、responses API 与 baseUrl 判断等。
+ */
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import type { SimpleStreamOptions } from "@mariozechner/pi-ai";
 import { streamSimple } from "@mariozechner/pi-ai";

@@ -1,3 +1,6 @@
+/**
+ * 按 provider 对解析后的 Model 做规范化：OpenAI Codex 的 api/baseUrl、以及 model-compat 的兼容字段。
+ */
 import type { Api, Model } from "@mariozechner/pi-ai";
 import { normalizeModelCompat } from "../model-compat.js";
 import { normalizeProviderId } from "../model-selection.js";
@@ -54,6 +57,7 @@ function normalizeOpenAICodexTransport(params: {
   } as Model<Api>;
 }
 
+/** 对 resolveModel 得到的 model 做 provider 相关规范化（Codex 传输 + compat） */
 export function normalizeResolvedProviderModel(params: {
   provider: string;
   model: Model<Api>;

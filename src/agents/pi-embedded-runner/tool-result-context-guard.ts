@@ -1,3 +1,7 @@
+/**
+ * 工具结果上下文守卫：在注入上下文前对消息做 transformContext，将过大的 tool result 截断到预算内，
+ * 避免单条 tool result 占满上下文；与 tool-result-char-estimator 配合估算字符/ token。
+ */
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import {
   CHARS_PER_TOKEN_ESTIMATE,

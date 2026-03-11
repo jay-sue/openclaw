@@ -1,9 +1,14 @@
+/**
+ * 嵌入式 Pi 运行状态注册表：维护当前活跃运行的 handle，支持入队消息、中止、等待结束。
+ * 供 run.ts 在开始/结束时 set/clear，供外部 abort、queueMessage、waitFor 使用。
+ */
 import {
   diagnosticLogger as diag,
   logMessageQueued,
   logSessionStateChange,
 } from "../../logging/diagnostic.js";
 
+/** 单次嵌入式运行的句柄：排队消息、是否在流式/压缩中、中止 */
 type EmbeddedPiQueueHandle = {
   queueMessage: (text: string) => Promise<void>;
   isStreaming: () => boolean;
@@ -11,13 +16,16 @@ type EmbeddedPiQueueHandle = {
   abort: () => void;
 };
 
+/** 当前活跃的嵌入式运行：sessionId -> handle */
 const ACTIVE_EMBEDDED_RUNS = new Map<string, EmbeddedPiQueueHandle>();
+/** 等待某次运行结束的 Promise 与定时器 */
 type EmbeddedRunWaiter = {
   resolve: (ended: boolean) => void;
   timer: NodeJS.Timeout;
 };
 const EMBEDDED_RUN_WAITERS = new Map<string, Set<EmbeddedRunWaiter>>();
 
+/** 向当前活跃且处于流式状态的运行排队一条消息；无活跃运行或非流式时返回 false */
 export function queueEmbeddedPiMessage(sessionId: string, text: string): boolean {
   const handle = ACTIVE_EMBEDDED_RUNS.get(sessionId);
   if (!handle) {
@@ -43,7 +51,9 @@ export function queueEmbeddedPiMessage(sessionId: string, text: string): boolean
  * - With a sessionId, aborts that single run.
  * - With no sessionId, supports targeted abort modes (for example, compacting runs only).
  */
+/** 中止指定 session 的嵌入式运行 */
 export function abortEmbeddedPiRun(sessionId: string): boolean;
+/** 按模式中止：all=全部，compacting=仅正在压缩的运行 */
 export function abortEmbeddedPiRun(
   sessionId: undefined,
   opts: { mode: "all" | "compacting" },
@@ -103,6 +113,7 @@ export function abortEmbeddedPiRun(
   return false;
 }
 
+/** 判断指定 session 是否已有活跃的嵌入式运行 */
 export function isEmbeddedPiRunActive(sessionId: string): boolean {
   const active = ACTIVE_EMBEDDED_RUNS.has(sessionId);
   if (active) {
@@ -153,6 +164,7 @@ export async function waitForActiveEmbeddedRuns(
   }
 }
 
+/** 等待指定 session 的嵌入式运行结束，超时返回 false，结束时 resolve(true) */
 export function waitForEmbeddedPiRunEnd(sessionId: string, timeoutMs = 15_000): Promise<boolean> {
   if (!sessionId || !ACTIVE_EMBEDDED_RUNS.has(sessionId)) {
     return Promise.resolve(true);
@@ -200,6 +212,7 @@ function notifyEmbeddedRunEnded(sessionId: string) {
   }
 }
 
+/** 注册当前 session 的活跃运行 handle，用于 queue/abort/wait；会触发 session 状态变更日志 */
 export function setActiveEmbeddedRun(
   sessionId: string,
   handle: EmbeddedPiQueueHandle,
@@ -218,6 +231,7 @@ export function setActiveEmbeddedRun(
   }
 }
 
+/** 清除活跃运行；仅当当前 handle 与注册的相同时才删除并通知等待者，避免误清 */
 export function clearActiveEmbeddedRun(
   sessionId: string,
   handle: EmbeddedPiQueueHandle,

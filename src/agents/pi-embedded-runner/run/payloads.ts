@@ -1,3 +1,7 @@
+/**
+ * 根据单次 attempt 的结果（assistantTexts、toolMetas、lastAssistant、lastToolError 等）
+ * 构建对外的 payload 列表：文本、媒体、错误、reasoning、静默回复与工具错误策略。
+ */
 import type { AssistantMessage } from "@mariozechner/pi-ai";
 import { parseReplyDirectives } from "../../../auto-reply/reply/reply-directives.js";
 import type { ReasoningLevel, VerboseLevel } from "../../../auto-reply/thinking.js";

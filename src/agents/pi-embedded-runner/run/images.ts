@@ -1,3 +1,6 @@
+/**
+ * 从 prompt 或参数中检测并加载图片：路径、file://、[Image: source: ...] 等，解析为 ImageContent 并做尺寸/格式清洗。
+ */
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ImageContent } from "@mariozechner/pi-ai";

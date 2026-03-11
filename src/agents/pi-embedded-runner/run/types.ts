@@ -1,3 +1,7 @@
+/**
+ * 单次尝试 (attempt) 的类型：EmbeddedRunAttemptParams 为 runEmbeddedAttempt 的入参，
+ * EmbeddedRunAttemptResult 为返回（aborted、timedOut、assistantTexts、toolMetas、lastAssistant 等）。
+ */
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { Api, AssistantMessage, Model } from "@mariozechner/pi-ai";
 import type { AuthStorage, ModelRegistry } from "@mariozechner/pi-coding-agent";
@@ -9,6 +13,7 @@ import type { MessagingToolSend } from "../../pi-embedded-messaging.js";
 import type { NormalizedUsage } from "../../usage.js";
 import type { RunEmbeddedPiAgentParams } from "./params.js";
 
+/** 从 RunEmbeddedPiAgentParams 去掉由 run 层注入的 provider/model/auth/thinkLevel/lane/enqueue */
 type EmbeddedRunAttemptBase = Omit<
   RunEmbeddedPiAgentParams,
   "provider" | "model" | "authProfileId" | "authProfileIdSource" | "thinkLevel" | "lane" | "enqueue"
@@ -32,6 +37,7 @@ export type EmbeddedRunAttemptParams = EmbeddedRunAttemptBase & {
   legacyBeforeAgentStartResult?: PluginHookBeforeAgentStartResult;
 };
 
+/** 单次 runEmbeddedAttempt 的返回结构 */
 export type EmbeddedRunAttemptResult = {
   aborted: boolean;
   timedOut: boolean;

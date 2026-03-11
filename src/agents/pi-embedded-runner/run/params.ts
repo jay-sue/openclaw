@@ -1,3 +1,7 @@
+/**
+ * 嵌入式 Pi 运行参数：RunEmbeddedPiAgentParams 定义单次 runEmbeddedPiAgent 的完整入参
+ * （会话/通道、workspace、prompt、provider/model、回调、超时等）。
+ */
 import type { ImageContent } from "@mariozechner/pi-ai";
 import type { ReasoningLevel, ThinkLevel, VerboseLevel } from "../../../auto-reply/thinking.js";
 import type { ReplyPayload } from "../../../auto-reply/types.js";
@@ -10,7 +14,7 @@ import type { BlockReplyPayload } from "../../pi-embedded-payloads.js";
 import type { BlockReplyChunking, ToolResultFormat } from "../../pi-embedded-subscribe.js";
 import type { SkillSnapshot } from "../../skills.js";
 
-// Simplified tool definition for client-provided tools (OpenResponses hosted tools)
+/** 客户端提供的工具定义（如 OpenResponses 托管工具）的简化结构 */
 export type ClientToolDefinition = {
   type: "function";
   function: {
@@ -20,6 +24,7 @@ export type ClientToolDefinition = {
   };
 };
 
+/** 单次嵌入式 Pi 代理运行的完整入参 */
 export type RunEmbeddedPiAgentParams = {
   sessionId: string;
   sessionKey?: string;

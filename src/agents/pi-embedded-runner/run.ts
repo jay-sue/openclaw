@@ -1,3 +1,9 @@
+/**
+ * 嵌入式 Pi 代理主入口：runEmbeddedPiAgent。
+ * 负责 lane 入队、workspace 解析、before_model_resolve/before_agent_start 钩子、模型与认证解析、
+ * 多 profile 轮换、重试循环（含 context overflow 压缩与 tool result 截断）、用量汇总，
+ * 返回 EmbeddedPiRunResult（payloads + meta）。
+ */
 import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
@@ -106,6 +112,7 @@ function scrubAnthropicRefusalMagic(prompt: string): string {
   );
 }
 
+/** 单次运行内多次 API 调用的 token 用量累加器；last* 仅保留最近一次调用的 cache/input，用于准确上报上下文大小 */
 type UsageAccumulator = {
   input: number;
   output: number;
@@ -252,6 +259,10 @@ function buildErrorAgentMeta(params: {
   };
 }
 
+/**
+ * 执行一次嵌入式 Pi 代理运行：入队后解析模型与认证，在重试循环内调用 runEmbeddedAttempt，
+ * 根据 context overflow / promptError / assistant failover 决定压缩、轮换 profile 或返回结果。
+ */
 export async function runEmbeddedPiAgent(
   params: RunEmbeddedPiAgentParams,
 ): Promise<EmbeddedPiRunResult> {

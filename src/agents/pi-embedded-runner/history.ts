@@ -1,16 +1,19 @@
+/**
+ * 会话历史裁剪：按轮次限制历史条数，并从 sessionKey + config 解析 DM/频道 的 historyLimit。
+ */
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { OpenClawConfig } from "../../config/config.js";
 
 const THREAD_SUFFIX_REGEX = /^(.*)(?::(?:thread|topic):\d+)$/i;
 
+/** 去掉 sessionKey 中的 :thread:N 或 :topic:N 后缀，用于按用户维度匹配配置 */
 function stripThreadSuffix(value: string): string {
   const match = value.match(THREAD_SUFFIX_REGEX);
   return match?.[1] ?? value;
 }
 
 /**
- * Limits conversation history to the last N user turns (and their associated
- * assistant responses). This reduces token usage for long-running DM sessions.
+ * 将消息列表限制为最近 N 个用户轮次（及其对应的 assistant 回复），减少长会话的 token 消耗。
  */
 export function limitHistoryTurns(
   messages: AgentMessage[],

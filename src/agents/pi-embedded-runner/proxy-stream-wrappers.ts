@@ -1,3 +1,6 @@
+/**
+ * 代理/透传流式封装：OpenRouter 头、Kilocode 头与 reasoning 映射、cache 等，供 extra-params 组装 streamFn。
+ */
 import type { StreamFn } from "@mariozechner/pi-agent-core";
 import { streamSimple } from "@mariozechner/pi-ai";
 import type { ThinkLevel } from "../../auto-reply/thinking.js";

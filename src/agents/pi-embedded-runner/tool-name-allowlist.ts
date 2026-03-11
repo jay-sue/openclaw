@@ -1,3 +1,6 @@
+/**
+ * 收集本次运行允许的工具名集合（来自 AgentTool 与 clientTools），供工具名规范化与分发时校验。
+ */
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { ClientToolDefinition } from "./run/params.js";
 
@@ -11,6 +14,7 @@ function addName(names: Set<string>, value: unknown): void {
   }
 }
 
+/** 从 tools 与 clientTools 中收集所有工具名称，返回去重后的 Set */
 export function collectAllowedToolNames(params: {
   tools: AgentTool[];
   clientTools?: ClientToolDefinition[];

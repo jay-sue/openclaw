@@ -1,3 +1,7 @@
+/**
+ * 嵌入式运行的系统提示：委托 buildAgentSystemPrompt 构建完整系统提示，
+ * 并支持覆盖与应用到 Session（createSystemPromptOverride、applySystemPromptOverrideToSession）。
+ */
 import type { AgentTool } from "@mariozechner/pi-agent-core";
 import type { AgentSession } from "@mariozechner/pi-coding-agent";
 import type { MemoryCitationsMode } from "../../config/types.memory.js";
@@ -8,6 +12,7 @@ import { buildToolSummaryMap } from "../tool-summaries.js";
 import type { EmbeddedSandboxInfo } from "./types.js";
 import type { ReasoningLevel, ThinkLevel } from "./utils.js";
 
+/** 根据 workspace、think/reasoning、技能、工具、沙箱等参数构建嵌入式运行的系统提示字符串 */
 export function buildEmbeddedSystemPrompt(params: {
   workspaceDir: string;
   defaultThinkLevel?: ThinkLevel;
@@ -86,6 +91,7 @@ export function buildEmbeddedSystemPrompt(params: {
   });
 }
 
+/** 创建固定系统提示覆盖函数（忽略默认 prompt，始终返回 override） */
 export function createSystemPromptOverride(
   systemPrompt: string,
 ): (defaultPrompt?: string) => string {
@@ -93,6 +99,7 @@ export function createSystemPromptOverride(
   return (_defaultPrompt?: string) => override;
 }
 
+/** 将系统提示覆盖（字符串或函数）应用到 AgentSession */
 export function applySystemPromptOverrideToSession(
   session: AgentSession,
   override: string | ((defaultPrompt?: string) => string),

@@ -1,3 +1,7 @@
+/**
+ * 嵌入式会话压缩：在 context engine 上执行 compact，支持 overflow/manual 触发、token 预算、force。
+ * 内部完成会话加载、消息度量、摘要生成、写回与 internal hook；与 compaction-safety-timeout 配合防止卡死。
+ */
 import fs from "node:fs/promises";
 import os from "node:os";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";

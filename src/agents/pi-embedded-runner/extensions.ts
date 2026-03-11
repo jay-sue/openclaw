@@ -1,3 +1,7 @@
+/**
+ * 嵌入式运行扩展工厂：根据 config 组装 context-pruning（cache-ttl 模式）与 compaction-safeguard 等扩展，
+ * 供 run/attempt 注入 SessionManager。
+ */
 import type { Api, Model } from "@mariozechner/pi-ai";
 import type { ExtensionFactory, SessionManager } from "@mariozechner/pi-coding-agent";
 import type { OpenClawConfig } from "../../config/config.js";
@@ -61,6 +65,7 @@ function resolveCompactionMode(cfg?: OpenClawConfig): "default" | "safeguard" {
   return cfg?.agents?.defaults?.compaction?.mode === "safeguard" ? "safeguard" : "default";
 }
 
+/** 根据 cfg/provider/modelId/model 构建本次运行要注入的扩展工厂列表（compaction-safeguard、context-pruning 等） */
 export function buildEmbeddedExtensionFactories(params: {
   cfg: OpenClawConfig | undefined;
   sessionManager: SessionManager;
