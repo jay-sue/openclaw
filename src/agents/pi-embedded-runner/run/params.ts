@@ -32,41 +32,41 @@ export type RunEmbeddedPiAgentParams = {
   messageChannel?: string;
   messageProvider?: string;
   agentAccountId?: string;
-  /** What initiated this agent run: "user", "heartbeat", "cron", or "memory". */
+  /** 本次运行的触发来源："user" | "heartbeat" | "cron" | "memory" */
   trigger?: string;
-  /** Relative workspace path that memory-triggered writes are allowed to append to. */
+  /** 由 memory 触发时允许追加写入的 workspace 相对路径 */
   memoryFlushWritePath?: string;
-  /** Delivery target (e.g. telegram:group:123:topic:456) for topic/thread routing. */
+  /** 投递目标（如 telegram:group:123:topic:456），用于话题/线程路由 */
   messageTo?: string;
-  /** Thread/topic identifier for routing replies to the originating thread. */
+  /** 话题/线程标识，用于将回复路由到发起线程 */
   messageThreadId?: string | number;
-  /** Group id for channel-level tool policy resolution. */
+  /** 群组 id，用于按通道解析工具策略 */
   groupId?: string | null;
-  /** Group channel label (e.g. #general) for channel-level tool policy resolution. */
+  /** 群组通道标签（如 #general），用于按通道解析工具策略 */
   groupChannel?: string | null;
-  /** Group space label (e.g. guild/team id) for channel-level tool policy resolution. */
+  /** 群组空间标识（如 guild/team id），用于按通道解析工具策略 */
   groupSpace?: string | null;
-  /** Parent session key for subagent policy inheritance. */
+  /** 父会话 key，用于子代理策略继承 */
   spawnedBy?: string | null;
   senderId?: string | null;
   senderName?: string | null;
   senderUsername?: string | null;
   senderE164?: string | null;
-  /** Whether the sender is an owner (required for owner-only tools). */
+  /** 发送方是否为 owner（仅 owner 可用的工具会据此判断） */
   senderIsOwner?: boolean;
-  /** Current channel ID for auto-threading (Slack). */
+  /** 当前通道 ID，用于 Slack 自动建线程 */
   currentChannelId?: string;
-  /** Current thread timestamp for auto-threading (Slack). */
+  /** 当前线程时间戳，用于 Slack 自动建线程 */
   currentThreadTs?: string;
-  /** Current inbound message id for action fallbacks (e.g. Telegram react). */
+  /** 当前入站消息 id，用于回退操作（如 Telegram 回帖/反应） */
   currentMessageId?: string | number;
-  /** Reply-to mode for Slack auto-threading. */
+  /** Slack 自动建线程的回复模式 */
   replyToMode?: "off" | "first" | "all";
-  /** Mutable ref to track if a reply was sent (for "first" mode). */
+  /** 可变 ref，用于在 "first" 模式下记录是否已发送过回复 */
   hasRepliedRef?: { value: boolean };
-  /** Require explicit message tool targets (no implicit last-route sends). */
+  /** 是否要求消息工具必须指定目标（禁止隐式沿用上次路由） */
   requireExplicitMessageTarget?: boolean;
-  /** If true, omit the message tool from the tool list. */
+  /** 为 true 时从工具列表中移除消息工具 */
   disableMessageTool?: boolean;
   sessionFile: string;
   workspaceDir: string;
@@ -75,9 +75,9 @@ export type RunEmbeddedPiAgentParams = {
   skillsSnapshot?: SkillSnapshot;
   prompt: string;
   images?: ImageContent[];
-  /** Optional client-provided tools (OpenResponses hosted tools). */
+  /** 可选的客户端提供工具（如 OpenResponses 托管工具） */
   clientTools?: ClientToolDefinition[];
-  /** Disable built-in tools for this run (LLM-only mode). */
+  /** 本次运行是否禁用内置工具（仅 LLM 模式） */
   disableTools?: boolean;
   provider?: string;
   model?: string;
@@ -87,15 +87,15 @@ export type RunEmbeddedPiAgentParams = {
   verboseLevel?: VerboseLevel;
   reasoningLevel?: ReasoningLevel;
   toolResultFormat?: ToolResultFormat;
-  /** If true, suppress tool error warning payloads for this run (including mutating tools). */
+  /** 为 true 时本次运行不展示工具错误警告 payload（含可变操作） */
   suppressToolErrorWarnings?: boolean;
-  /** Bootstrap context mode for workspace file injection. */
+  /** Bootstrap 上下文模式：注入到 workspace 的文件范围 */
   bootstrapContextMode?: "full" | "lightweight";
-  /** Run kind hint for context mode behavior. */
+  /** 运行类型提示，用于上下文模式行为（如 heartbeat/cron 精简） */
   bootstrapContextRunKind?: "default" | "heartbeat" | "cron";
-  /** Seen bootstrap truncation warning signatures for this session (once mode dedupe). */
+  /** 本会话已出现过的 bootstrap 截断警告签名，用于按模式去重 */
   bootstrapPromptWarningSignaturesSeen?: string[];
-  /** Last shown bootstrap truncation warning signature for this session. */
+  /** 本会话最近一次展示的 bootstrap 截断警告签名 */
   bootstrapPromptWarningSignature?: string;
   execOverrides?: Pick<ExecToolDefaults, "host" | "security" | "ask" | "node">;
   bashElevated?: ExecElevatedDefaults;
@@ -122,11 +122,8 @@ export type RunEmbeddedPiAgentParams = {
   ownerNumbers?: string[];
   enforceFinalTag?: boolean;
   /**
-   * Allow a single run attempt even when all auth profiles are in cooldown,
-   * but only for inferred transient cooldowns like `rate_limit` or `overloaded`.
-   *
-   * This is used by model fallback when trying sibling models on providers
-   * where transient service pressure is often model-scoped.
+   * 当所有 auth profile 处于冷却时仍允许尝试一次运行，仅针对推断为短暂冷却的原因（如 rate_limit、overloaded）。
+   * 用于 model fallback 在同类 provider 上尝试兄弟模型时，因短暂压力常按模型维度生效。
    */
   allowTransientCooldownProbe?: boolean;
 };

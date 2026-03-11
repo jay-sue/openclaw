@@ -11,6 +11,7 @@ import {
 import type { FailoverReason } from "../../pi-embedded-helpers.js";
 import { log } from "../logger.js";
 
+/** 单次 failover 决策日志的完整输入：阶段、决策类型、错误与 provider/model 等 */
 export type FailoverDecisionLoggerInput = {
   stage: "prompt" | "assistant";
   decision: "rotate_profile" | "fallback_model" | "surface_error";
@@ -27,8 +28,10 @@ export type FailoverDecisionLoggerInput = {
   status?: number;
 };
 
+/** 创建 logger 时的基类入参（不含 decision 与 status，由调用时传入） */
 export type FailoverDecisionLoggerBase = Omit<FailoverDecisionLoggerInput, "decision" | "status">;
 
+/** 规范化基类：若未显式给出 failoverReason/profileFailureReason 且 timedOut，则补全为 "timeout" */
 export function normalizeFailoverDecisionObservationBase(
   base: FailoverDecisionLoggerBase,
 ): FailoverDecisionLoggerBase {
@@ -39,7 +42,7 @@ export function normalizeFailoverDecisionObservationBase(
   };
 }
 
-/** 创建 failover 决策日志函数，调用时写入带 runId/stage/decision/reason/provider/model 的 warn 日志 */
+/** 创建 failover 决策日志函数；返回的函数在调用时写入 warn 日志（含 runId/stage/decision/reason/provider/model），敏感字段已脱敏 */
 export function createFailoverDecisionLogger(
   base: FailoverDecisionLoggerBase,
 ): (
@@ -47,6 +50,7 @@ export function createFailoverDecisionLogger(
   extra?: Pick<FailoverDecisionLoggerInput, "status">,
 ) => void {
   const normalizedBase = normalizeFailoverDecisionObservationBase(base);
+  // profileId 脱敏，仅保留前 12 字符等
   const safeProfileId = normalizedBase.profileId
     ? redactIdentifier(normalizedBase.profileId, { len: 12 })
     : undefined;

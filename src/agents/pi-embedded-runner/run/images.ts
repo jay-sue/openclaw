@@ -16,9 +16,7 @@ import type { SandboxFsBridge } from "../../sandbox/fs-bridge.js";
 import { sanitizeImageBlocks } from "../../tool-images.js";
 import { log } from "../logger.js";
 
-/**
- * Common image file extensions for detection.
- */
+/** 用于检测的图片扩展名列表 */
 const IMAGE_EXTENSION_NAMES = [
   "png",
   "jpg",
@@ -33,11 +31,15 @@ const IMAGE_EXTENSION_NAMES = [
 ] as const;
 const IMAGE_EXTENSIONS = new Set(IMAGE_EXTENSION_NAMES.map((ext) => `.${ext}`));
 const IMAGE_EXTENSION_PATTERN = IMAGE_EXTENSION_NAMES.join("|");
+/** [media attached: path (type) | url] 中提取 path 的正则：路径以扩展名结尾，后接 ( 或 $ 或 | */
 const MEDIA_ATTACHED_PATH_REGEX_SOURCE =
   "^\\s*(.+?\\.(?:" + IMAGE_EXTENSION_PATTERN + "))\\s*(?:\\(|$|\\|)";
+/** [Image: source: /path/to/file.ext] 格式的正则 */
 const MESSAGE_IMAGE_REGEX_SOURCE =
   "\\[Image:\\s*source:\\s*([^\\]]+\\.(?:" + IMAGE_EXTENSION_PATTERN + "))\\]";
+/** file:// URL 中图片路径的正则 */
 const FILE_URL_REGEX_SOURCE = "file://[^\\s<>\"'`\\]]+\\.(?:" + IMAGE_EXTENSION_PATTERN + ")";
+/** 绝对/相对/家目录路径的正则：以 ./ ../ ~/ 开头或前面为空白/引号/括号，后接路径且以图片扩展名结尾 */
 const PATH_REGEX_SOURCE =
   "(?:^|\\s|[\"'`(])((\\.\\.?/|[~/])[^\\s\"'`()\\[\\]]*\\.(?:" + IMAGE_EXTENSION_PATTERN + "))";
 
@@ -53,18 +55,18 @@ export interface DetectedImageRef {
   resolved: string;
 }
 
-/**
- * Checks if a file extension indicates an image file.
- */
+/** 根据文件扩展名判断是否为支持的图片格式 */
 function isImageExtension(filePath: string): boolean {
   const ext = path.extname(filePath).toLowerCase();
   return IMAGE_EXTENSIONS.has(ext);
 }
 
+/** 用于去重的规范化：Windows 下转小写，其余保持原样 */
 function normalizeRefForDedupe(raw: string): string {
   return process.platform === "win32" ? raw.toLowerCase() : raw;
 }
 
+/** 对 ImageContent 列表做尺寸/格式清洗，若有丢弃则打 warn 日志 */
 async function sanitizeImagesWithLog(
   images: ImageContent[],
   label: string,
@@ -98,7 +100,7 @@ export function detectImageReferences(prompt: string): DetectedImageRef[] {
   const refs: DetectedImageRef[] = [];
   const seen = new Set<string>();
 
-  // Helper to add a path ref
+  /** 将合法路径加入 refs 并去重；跳过空串、已见、http(s)、非图片扩展；~ 开头的会 resolve 为绝对路径 */
   const addPathRef = (raw: string) => {
     const trimmed = raw.trim();
     const dedupeKey = normalizeRefForDedupe(trimmed);
@@ -206,7 +208,6 @@ export async function loadImageFromRef(
   try {
     let targetPath = ref.resolved;
 
-    // Resolve paths relative to sandbox or workspace as needed
     if (options?.sandbox) {
       try {
         const resolved = await resolveSandboxedBridgeMediaPath({
@@ -236,7 +237,6 @@ export async function loadImageFromRef(
       });
     }
 
-    // loadWebMedia handles local file paths (including file:// URLs)
     const media = options?.sandbox
       ? await loadWebMedia(targetPath, {
           maxBytes: options.maxBytes,
@@ -301,7 +301,6 @@ export async function detectAndLoadPromptImages(params: {
   loadedCount: number;
   skippedCount: number;
 }> {
-  // If model doesn't support images, return empty results
   if (!modelSupportsImages(params.model)) {
     return {
       images: [],
@@ -311,7 +310,6 @@ export async function detectAndLoadPromptImages(params: {
     };
   }
 
-  // Detect images from current prompt
   const allRefs = detectImageReferences(params.prompt);
 
   if (allRefs.length === 0) {

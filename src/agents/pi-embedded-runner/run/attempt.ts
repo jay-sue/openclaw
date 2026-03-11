@@ -138,6 +138,7 @@ import { pruneProcessedHistoryImages } from "./history-image-prune.js";
 import { detectAndLoadPromptImages } from "./images.js";
 import type { EmbeddedRunAttemptParams, EmbeddedRunAttemptResult } from "./types.js";
 
+/** 用于 before_prompt_build / before_agent_start 的钩子运行器类型 */
 type PromptBuildHookRunner = {
   hasHooks: (hookName: "before_prompt_build" | "before_agent_start") => boolean;
   runBeforePromptBuild: (
@@ -150,6 +151,7 @@ type PromptBuildHookRunner = {
   ) => Promise<PluginHookBeforeAgentStartResult | undefined>;
 };
 
+/** 判断当前 model 是否为 Ollama 或兼容 Ollama 的端点（本地 11434 或 provider 名含 ollama 的远程） */
 export function isOllamaCompatProvider(model: {
   provider?: string;
   baseUrl?: string;
@@ -174,8 +176,7 @@ export function isOllamaCompatProvider(model: {
       return true;
     }
 
-    // Allow remote/LAN Ollama OpenAI-compatible endpoints when the provider id
-    // itself indicates Ollama usage (e.g. "my-ollama").
+    // 当 provider 名本身暗示 Ollama（如 "my-ollama"）时，允许远程/局域网 Ollama OpenAI 兼容端点
     const providerHintsOllama = providerId.includes("ollama");
     const isOllamaPort = parsed.port === "11434";
     const isOllamaCompatPath = parsed.pathname === "/" || /^\/v1\/?$/i.test(parsed.pathname);
@@ -215,7 +216,7 @@ export function shouldInjectOllamaCompatNumCtx(params: {
   config?: OpenClawConfig;
   providerId?: string;
 }): boolean {
-  // Restrict to the OpenAI-compatible adapter path only.
+  // 仅限走 OpenAI 兼容适配器路径
   if (params.model.api !== "openai-completions") {
     return false;
   }
@@ -250,8 +251,7 @@ export function wrapOllamaCompatNumCtx(baseFn: StreamFn | undefined, numCtx: num
 function normalizeToolCallNameForDispatch(rawName: string, allowedToolNames?: Set<string>): string {
   const trimmed = rawName.trim();
   if (!trimmed) {
-    // Keep whitespace-only placeholders unchanged so they do not collapse to
-    // empty names (which can later surface as toolName="" loops).
+    // 保留仅空白的占位符不变，避免被规约为空串导致后续出现 toolName="" 死循环
     return rawName;
   }
   if (!allowedToolNames || allowedToolNames.size === 0) {
@@ -439,7 +439,7 @@ export function wrapStreamFnTrimToolCallNames(
 }
 
 // ---------------------------------------------------------------------------
-// xAI / Grok: decode HTML entities in tool call arguments
+// xAI / Grok：对 tool call 参数中的 HTML 实体解码，避免 API 返回的 &amp; 等导致解析错误
 // ---------------------------------------------------------------------------
 
 const HTML_ENTITY_RE = /&(?:amp|lt|gt|quot|apos|#39|#x[0-9a-f]+|#\d+);/i;
@@ -641,7 +641,7 @@ export function prependSystemPromptAddition(params: {
   return `${params.systemPromptAddition}\n\n${params.systemPrompt}`;
 }
 
-/** Build runtime context passed into context-engine afterTurn hooks. */
+/** 构建传入 context-engine afterTurn 钩子的运行时上下文 */
 export function buildAfterTurnRuntimeContext(params: {
   attempt: Pick<
     EmbeddedRunAttemptParams,
@@ -845,7 +845,7 @@ export async function runEmbeddedAttempt(
       config: params.config,
       sessionAgentId,
     });
-    // Check if the model supports native image input
+    // 判断模型是否支持原生图片输入
     const modelHasVision = params.model.input?.includes("image") ?? false;
     const toolsRaw = params.disableTools
       ? []
@@ -951,7 +951,7 @@ export async function runEmbeddedAttempt(
         : undefined;
     const sandboxInfo = buildEmbeddedSandboxInfo(sandbox, params.bashElevated);
     const reasoningTagHint = isReasoningTagProvider(params.provider);
-    // Resolve channel-specific message actions for system prompt
+    // 解析当前通道的消息动作（如 react、edit），用于系统提示
     const channelActions = runtimeChannel
       ? listChannelSupportedActions({
           cfg: params.config,
@@ -1062,6 +1062,7 @@ export async function runEmbeddedAttempt(
     const systemPromptOverride = createSystemPromptOverride(appendPrompt);
     let systemPromptText = systemPromptOverride();
 
+    // 获取会话写锁，防止并发写同一 session 文件；超时时间由 timeoutMs 推导
     const sessionLock = await acquireSessionWriteLock({
       sessionFile: params.sessionFile,
       maxHoldMs: resolveSessionLockMaxHoldFromTimeout({
@@ -1127,8 +1128,7 @@ export async function runEmbeddedAttempt(
         contextEngineInfo: params.contextEngine?.info,
       });
 
-      // Sets compaction/pruning runtime state and returns extension factories
-      // that must be passed to the resource loader for the safeguard to be active.
+      // 构建扩展工厂（compaction-safeguard、context-pruning 等），并设置 compaction/pruning 运行时状态；需传入 resourceLoader 才会生效
       const extensionFactories = buildEmbeddedExtensionFactories({
         cfg: params.config,
         sessionManager,
@@ -1136,8 +1136,7 @@ export async function runEmbeddedAttempt(
         modelId: params.modelId,
         model: params.model,
       });
-      // Only create an explicit resource loader when there are extension factories
-      // to register; otherwise let createAgentSession use its built-in default.
+      // 仅在有扩展工厂需要注册时创建显式 resourceLoader，否则由 createAgentSession 使用内置默认
       let resourceLoader: DefaultResourceLoader | undefined;
       if (extensionFactories.length > 0) {
         resourceLoader = new DefaultResourceLoader({
@@ -1149,7 +1148,7 @@ export async function runEmbeddedAttempt(
         await resourceLoader.reload();
       }
 
-      // Get hook runner early so it's available when creating tools
+      // 提前获取 hook runner，便于创建工具时使用
       const hookRunner = getGlobalHookRunner();
 
       const { builtInTools, customTools } = splitSdkTools({
@@ -1157,7 +1156,7 @@ export async function runEmbeddedAttempt(
         sandboxEnabled: !!sandbox?.enabled,
       });
 
-      // Add client tools (OpenResponses hosted tools) to customTools
+      // 将客户端工具（OpenResponses 托管工具）加入 customTools
       let clientToolCallDetected: { name: string; params: Record<string, unknown> } | null = null;
       const clientToolLoopDetection = resolveToolLoopDetectionConfig({
         cfg: params.config,
@@ -1230,10 +1229,9 @@ export async function runEmbeddedAttempt(
         workspaceDir: params.workspaceDir,
       });
 
-      // Ollama native API: bypass SDK's streamSimple and use direct /api/chat calls
-      // for reliable streaming + tool calling support (#11828).
+      // Ollama 原生 API：绕过 SDK 的 streamSimple，直接走 /api/chat 以保证流式与工具调用稳定 (#11828)
       if (params.model.api === "ollama") {
-        // Prioritize configured provider baseUrl so Docker/remote Ollama hosts work reliably.
+        // 优先使用配置的 provider baseUrl，使 Docker/远程 Ollama 稳定可用
         const providerConfig = params.config?.models?.providers?.[params.model.provider];
         const providerBaseUrl =
           typeof providerConfig?.baseUrl === "string" ? providerConfig.baseUrl : undefined;
@@ -1254,12 +1252,11 @@ export async function runEmbeddedAttempt(
           activeSession.agent.streamFn = streamSimple;
         }
       } else {
-        // Force a stable streamFn reference so vitest can reliably mock @mariozechner/pi-ai.
+        // 固定 streamFn 引用，便于 vitest 稳定 mock @mariozechner/pi-ai
         activeSession.agent.streamFn = streamSimple;
       }
 
-      // Ollama with OpenAI-compatible API needs num_ctx in payload.options.
-      // Otherwise Ollama defaults to a 4096 context window.
+      // 使用 OpenAI 兼容 API 的 Ollama 需在 payload.options 中传入 num_ctx，否则默认 4096 上下文
       const providerIdForNumCtx =
         typeof params.model.provider === "string" && params.model.provider.trim().length > 0
           ? params.model.provider
@@ -1298,9 +1295,7 @@ export async function runEmbeddedAttempt(
         activeSession.agent.streamFn = cacheTrace.wrapStreamFn(activeSession.agent.streamFn);
       }
 
-      // Copilot/Claude can reject persisted `thinking` blocks (e.g. thinkingSignature:"reasoning_text")
-      // on *any* follow-up provider call (including tool continuations). Wrap the stream function
-      // so every outbound request sees sanitized messages.
+      // Copilot/Claude 在任意后续调用（含工具续写）中可能拒绝持久化了的 thinking 块；包装 streamFn 使每次请求前清洗消息
       if (transcriptPolicy.dropThinkingBlocks) {
         const inner = activeSession.agent.streamFn;
         activeSession.agent.streamFn = (model, context, options) => {
@@ -1321,11 +1316,8 @@ export async function runEmbeddedAttempt(
         };
       }
 
-      // Mistral (and other strict providers) reject tool call IDs that don't match their
-      // format requirements (e.g. [a-zA-Z0-9]{9}). sanitizeSessionHistory only processes
-      // historical messages at attempt start, but the agent loop's internal tool call →
-      // tool result cycles bypass that path. Wrap streamFn so every outbound request
-      // sees sanitized tool call IDs.
+      // Mistral 等严格 provider 会拒绝不符合格式的 tool call id（如 [a-zA-Z0-9]{9}）。sanitizeSessionHistory 只在 attempt 开始时处理历史，
+      // 而 agent 循环内部的 tool call → tool result 不经过该路径，故包装 streamFn 使每次出站请求都带清洗后的 tool call id
       if (transcriptPolicy.sanitizeToolCallIds && transcriptPolicy.toolCallIdMode) {
         const inner = activeSession.agent.streamFn;
         const mode = transcriptPolicy.toolCallIdMode;
@@ -1370,9 +1362,7 @@ export async function runEmbeddedAttempt(
         };
       }
 
-      // Some models emit tool names with surrounding whitespace (e.g. " read ").
-      // pi-agent-core dispatches tool calls with exact string matching, so normalize
-      // names on the live response stream before tool execution.
+      // 部分模型返回的工具名带首尾空格（如 " read "），pi-agent-core 按字符串精确匹配分发，故在流式响应上先规范化再执行工具
       activeSession.agent.streamFn = wrapStreamFnTrimToolCallNames(
         activeSession.agent.streamFn,
         allowedToolNames,
@@ -1413,9 +1403,7 @@ export async function runEmbeddedAttempt(
           validated,
           getDmHistoryLimitFromSessionKey(params.sessionKey, params.config),
         );
-        // Re-run tool_use/tool_result pairing repair after truncation, since
-        // limitHistoryTurns can orphan tool_result blocks by removing the
-        // assistant message that contained the matching tool_use.
+        // 裁剪轮次后重新做 tool_use/tool_result 配对修复：limitHistoryTurns 可能删掉含 tool_use 的 assistant，导致 tool_result 孤立
         const limited = transcriptPolicy.repairToolUseResultPairing
           ? sanitizeToolUseResultPairing(truncated)
           : truncated;
@@ -1625,7 +1613,7 @@ export async function runEmbeddedAttempt(
         }
       }
 
-      // Hook runner was already obtained earlier before tool creation
+      // hook runner 已在创建工具前取得
       const hookAgentId = sessionAgentId;
 
       let promptError: unknown = null;
@@ -1634,8 +1622,7 @@ export async function runEmbeddedAttempt(
       try {
         const promptStartedAt = Date.now();
 
-        // Run before_prompt_build hooks to allow plugins to inject prompt context.
-        // Legacy compatibility: before_agent_start is also checked for context fields.
+        // 执行 before_prompt_build 钩子，供插件注入 prompt 上下文；兼容旧逻辑：同时检查 before_agent_start 的上下文字段
         let effectivePrompt = params.prompt;
         const hookCtx = {
           agentId: hookAgentId,
@@ -1689,7 +1676,7 @@ export async function runEmbeddedAttempt(
           messages: activeSession.messages,
         });
 
-        // Repair orphaned trailing user messages so new prompts don't violate role ordering.
+        // 修复孤立的末尾 user 消息，避免新 prompt 违反角色交替顺序
         const leafEntry = sessionManager.getLeafEntry();
         if (leafEntry?.type === "message" && leafEntry.message.role === "user") {
           if (leafEntry.parentId) {
@@ -1706,15 +1693,13 @@ export async function runEmbeddedAttempt(
         }
 
         try {
-          // Idempotent cleanup for legacy sessions with persisted image payloads.
-          // Called each run; only mutates already-answered user turns that still carry image blocks.
+          // 历史图片裁剪：对已有 assistant 回复的 user 轮次中的 image 块替换为占位，幂等且每轮可执行
           const didPruneImages = pruneProcessedHistoryImages(activeSession.messages);
           if (didPruneImages) {
             activeSession.agent.replaceMessages(activeSession.messages);
           }
 
-          // Detect and load images referenced in the prompt for vision-capable models.
-          // Images are prompt-local only (pi-like behavior).
+          // 为支持视觉的模型检测并加载 prompt 中引用的图片；图片仅作用于当前 prompt（类 pi 行为）
           const imageResult = await detectAndLoadPromptImages({
             prompt: effectivePrompt,
             workspaceDir: effectiveWorkspace,
@@ -1723,7 +1708,7 @@ export async function runEmbeddedAttempt(
             maxBytes: MAX_IMAGE_BYTES,
             maxDimensionPx: resolveImageSanitizationLimits(params.config).maxDimensionPx,
             workspaceOnly: effectiveFsWorkspaceOnly,
-            // Enforce sandbox path restrictions when sandbox is enabled
+            // 启用沙箱时强制沙箱路径限制
             sandbox:
               sandbox?.enabled && sandbox?.fsBridge
                 ? { root: sandbox.workspaceDir, bridge: sandbox.fsBridge }
@@ -1736,7 +1721,7 @@ export async function runEmbeddedAttempt(
             note: `images: prompt=${imageResult.images.length}`,
           });
 
-          // Diagnostic: log context sizes before prompt to help debug early overflow errors.
+          // 诊断：在发 prompt 前打上下文大小日志，便于排查提前溢出
           if (log.isEnabled("debug")) {
             const msgCount = activeSession.messages.length;
             const systemLen = systemPromptText?.length ?? 0;
@@ -1780,8 +1765,7 @@ export async function runEmbeddedAttempt(
               });
           }
 
-          // Only pass images option if there are actually images to pass
-          // This avoids potential issues with models that don't expect the images parameter
+          // 仅在有图片时传入 images 选项，避免部分模型不接受 images 参数而出错
           if (imageResult.images.length > 0) {
             await abortable(activeSession.prompt(effectivePrompt, { images: imageResult.images }));
           } else {
@@ -1796,22 +1780,17 @@ export async function runEmbeddedAttempt(
           );
         }
 
-        // Capture snapshot before compaction wait so we have complete messages if timeout occurs
-        // Check compaction state before and after to avoid race condition where compaction starts during capture
-        // Use session state (not subscription) for snapshot decisions - need instantaneous compaction status
+        // 在等待压缩前抓取消息快照，以便超时时能返回完整消息；抓取前后各检查一次 isCompacting，避免抓取期间压缩启动导致竞态
         const wasCompactingBefore = activeSession.isCompacting;
         const snapshot = activeSession.messages.slice();
         const wasCompactingAfter = activeSession.isCompacting;
-        // Only trust snapshot if compaction wasn't running before or after capture
+        // 仅当抓取前后都未在压缩时，才信任该快照
         const preCompactionSnapshot = wasCompactingBefore || wasCompactingAfter ? null : snapshot;
         const preCompactionSessionId = activeSession.sessionId;
         const COMPACTION_RETRY_AGGREGATE_TIMEOUT_MS = 60_000;
 
         try {
-          // Flush buffered block replies before waiting for compaction so the
-          // user receives the assistant response immediately.  Without this,
-          // coalesced/buffered blocks stay in the pipeline until compaction
-          // finishes — which can take minutes on large contexts (#35074).
+          // 在等待压缩前先刷掉缓存的 block 回复，用户才能立即看到助手回复；否则会等压缩结束（大上下文可达数分钟）(#35074)
           if (params.onBlockReplyFlush) {
             await params.onBlockReplyFlush();
           }
@@ -1849,12 +1828,9 @@ export async function runEmbeddedAttempt(
 
         const compactionOccurredThisAttempt = getCompactionCount() > 0;
 
-        // Append cache-TTL timestamp AFTER prompt + compaction retry completes.
-        // Previously this was before the prompt, which caused a custom entry to be
-        // inserted between compaction and the next prompt — breaking the
-        // prepareCompaction() guard that checks the last entry type, leading to
-        // double-compaction. See: https://github.com/openclaw/openclaw/issues/9282
-        // Skip when timed out during compaction — session state may be inconsistent.
+        // 在 prompt + 压缩重试完成后再追加 cache-TTL 时间戳。此前在 prompt 前追加，会在压缩与下一次 prompt 之间插入 custom entry，
+        // 破坏 prepareCompaction() 根据最后一条类型做的判断，导致二次压缩。见 https://github.com/openclaw/openclaw/issues/9282
+        // 若在压缩期间超时则跳过，会话状态可能不一致
         if (!timedOutDuringCompaction && !compactionOccurredThisAttempt) {
           const shouldTrackCacheTtl =
             params.config?.agents?.defaults?.contextPruning?.mode === "cache-ttl" &&
@@ -1868,8 +1844,7 @@ export async function runEmbeddedAttempt(
           }
         }
 
-        // If timeout occurred during compaction, use pre-compaction snapshot when available
-        // (compaction restructures messages but does not add user/assistant turns).
+        // 若超时发生在压缩期间，优先使用压缩前快照（若有）；压缩只重组消息，不增加 user/assistant 轮次
         const snapshotSelection = selectCompactionTimeoutSnapshot({
           timedOutDuringCompaction,
           preCompactionSnapshot,
@@ -1903,7 +1878,7 @@ export async function runEmbeddedAttempt(
           }
         }
 
-        // Let the active context engine run its post-turn lifecycle.
+        // 让当前 context engine 执行本轮后的生命周期
         if (params.contextEngine) {
           const afterTurnRuntimeContext = buildAfterTurnRuntimeContext({
             attempt: params,
@@ -1925,7 +1900,7 @@ export async function runEmbeddedAttempt(
               log.warn(`context engine afterTurn failed: ${String(afterTurnErr)}`);
             }
           } else {
-            // Fallback: ingest new messages individually
+            // 回退：逐条 ingest 新消息
             const newMessages = messagesSnapshot.slice(prePromptMessageCount);
             if (newMessages.length > 0) {
               if (typeof params.contextEngine.ingestBatch === "function") {
@@ -1963,9 +1938,7 @@ export async function runEmbeddedAttempt(
         });
         anthropicPayloadLogger?.recordUsage(messagesSnapshot, promptError);
 
-        // Run agent_end hooks to allow plugins to analyze the conversation
-        // This is fire-and-forget, so we don't await
-        // Run even on compaction timeout so plugins can log/cleanup
+        // 执行 agent_end 钩子供插件分析会话；fire-and-forget 不 await；压缩超时也执行以便插件打日志/清理
         if (hookRunner?.hasHooks("agent_end")) {
           hookRunner
             .runAgentEnd(
@@ -2000,9 +1973,7 @@ export async function runEmbeddedAttempt(
         try {
           unsubscribe();
         } catch (err) {
-          // unsubscribe() should never throw; if it does, it indicates a serious bug.
-          // Log at error level to ensure visibility, but don't rethrow in finally block
-          // as it would mask any exception from the try block above.
+          // unsubscribe() 不应抛错；若抛则视为严重 bug。用 error 级别打日志，但不在 finally 里 rethrow，以免掩盖上方 try 的异常
           log.error(
             `CRITICAL: unsubscribe failed, possible resource leak: runId=${params.runId} ${String(err)}`,
           );
@@ -2072,18 +2043,15 @@ export async function runEmbeddedAttempt(
         ),
         attemptUsage: getUsageTotals(),
         compactionCount: getCompactionCount(),
-        // Client tool call detected (OpenResponses hosted tools)
+        // 检测到客户端工具调用（OpenResponses 托管工具）
         clientToolCall: clientToolCallDetected ?? undefined,
       };
     } finally {
-      // Always tear down the session (and release the lock) before we leave this attempt.
+      // 离开本次 attempt 前务必销毁 session 并释放锁。
       //
-      // BUGFIX: Wait for the agent to be truly idle before flushing pending tool results.
-      // pi-agent-core's auto-retry resolves waitForRetry() on assistant message receipt,
-      // *before* tool execution completes in the retried agent loop. Without this wait,
-      // flushPendingToolResults() fires while tools are still executing, inserting
-      // synthetic "missing tool result" errors and causing silent agent failures.
-      // See: https://github.com/openclaw/openclaw/issues/8643
+      // BUGFIX：在 flush 待处理 tool result 前先等待 agent 真正空闲。pi-agent-core 的自动重试在收到 assistant 消息时就 resolve waitForRetry()，
+      // 早于重试循环内工具执行完成。若不等待就 flush，会在工具仍在执行时插入“缺少 tool result”的合成错误，导致静默失败。
+      // 见 https://github.com/openclaw/openclaw/issues/8643
       removeToolResultContextGuard?.();
       await flushPendingToolResultsAfterIdle({
         agent: session?.agent,
