@@ -1,0 +1,168 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="主流程" id="flow">
+    <mxGraphModel dx="1000" dy="700" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="800" pageHeight="1100" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <!-- 标题 -->
+        <mxCell id="title" value="runEmbeddedPiAgent 主流程" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=16;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="240" y="16" width="320" height="28" as="geometry"/>
+        </mxCell>
+        <!-- 开始 -->
+        <mxCell id="start" value="开始" style="shape=ellipse;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#388E3C;" vertex="1" parent="1">
+          <mxGeometry x="340" y="56" width="120" height="50" as="geometry"/>
+        </mxCell>
+        <!-- 入队 -->
+        <mxCell id="enqueue" value="按 session lane 入队&#xa;enqueueSession → enqueueGlobal" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#1976D2;" vertex="1" parent="1">
+          <mxGeometry x="300" y="130" width="200" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="workspace" value="解析 workspace&#xa;ensureRuntimePluginsLoaded" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#1976D2;" vertex="1" parent="1">
+          <mxGeometry x="300" y="200" width="200" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="hooks" value="before_model_resolve&#xa;before_agent_start 钩子" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#1976D2;" vertex="1" parent="1">
+          <mxGeometry x="300" y="270" width="200" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="resolve_model" value="resolveModel&#xa;contextWindow 校验" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#388E3C;" vertex="1" parent="1">
+          <mxGeometry x="300" y="340" width="200" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="auth_profiles" value="解析 auth profile 顺序&#xa;applyApiKeyInfo（含 Copilot 刷新）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#388E3C;" vertex="1" parent="1">
+          <mxGeometry x="300" y="410" width="200" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="loop_start" value="重试循环 (runLoopIterations)" style="shape=hexagon;perimeter=hexagonPerimeter2;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#E65100;" vertex="1" parent="1">
+          <mxGeometry x="310" y="480" width="180" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="attempt" value="runEmbeddedAttempt&#xa;（写锁、SessionManager、payload、stream、工具）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#E65100;" vertex="1" parent="1">
+          <mxGeometry x="260" y="550" width="280" height="56" as="geometry"/>
+        </mxCell>
+        <mxCell id="overflow?" value="context overflow?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFCDD2;strokeColor=#C62828;" vertex="1" parent="1">
+          <mxGeometry x="320" y="630" width="160" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="compact" value="contextEngine.compact&#xa;或 tool result 截断" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#7B1FA2;" vertex="1" parent="1">
+          <mxGeometry x="300" y="720" width="200" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="retry_overflow" value="continue（重试）" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF9C4;strokeColor=#F57F17;" vertex="1" parent="1">
+          <mxGeometry x="560" y="640" width="100" height="36" as="geometry"/>
+        </mxCell>
+        <mxCell id="prompt_err?" value="promptError?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFCDD2;strokeColor=#C62828;" vertex="1" parent="1">
+          <mxGeometry x="320" y="790" width="160" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="advance_profile" value="advanceAuthProfile&#xa;或 throw FailoverError" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#E65100;" vertex="1" parent="1">
+          <mxGeometry x="300" y="880" width="200" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="assistant_fail?" value="assistant failover?" style="rhombus;whiteSpace=wrap;html=1;fillColor=#FFCDD2;strokeColor=#C62828;" vertex="1" parent="1">
+          <mxGeometry x="320" y="950" width="160" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="build_payloads" value="buildEmbeddedRunPayloads&#xa;toNormalizedUsage / agentMeta" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#388E3C;" vertex="1" parent="1">
+          <mxGeometry x="300" y="1040" width="200" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="return_ok" value="返回 EmbeddedPiRunResult" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#388E3C;" vertex="1" parent="1">
+          <mxGeometry x="300" y="1110" width="200" height="44" as="geometry"/>
+        </mxCell>
+        <mxCell id="return_overflow" value="返回 context_overflow&#xa;错误 payload" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFCDD2;strokeColor=#C62828;" vertex="1" parent="1">
+          <mxGeometry x="80" y="640" width="160" height="50" as="geometry"/>
+        </mxCell>
+        <!-- 边 -->
+        <mxCell id="edge_start" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;endArrow=classic;" edge="1" parent="1" source="start" target="enqueue">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge_e2w" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;endArrow=classic;" edge="1" parent="1" source="enqueue" target="workspace">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge_w2h" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;endArrow=classic;" edge="1" parent="1" source="workspace" target="hooks">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge_h2r" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;endArrow=classic;" edge="1" parent="1" source="hooks" target="resolve_model">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge_r2a" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;endArrow=classic;" edge="1" parent="1" source="resolve_model" target="auth_profiles">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge_a2l" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;endArrow=classic;" edge="1" parent="1" source="auth_profiles" target="loop_start">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge_l2at" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;endArrow=classic;" edge="1" parent="1" source="loop_start" target="attempt">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge_at2ov" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;endArrow=classic;" edge="1" parent="1" source="attempt" target="overflow?">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge_ov_yes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#C62828;endArrow=classic;" edge="1" parent="1" source="overflow?" target="compact">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint as="offset" x="0" y="10"/>
+            <Array as="points">
+              <mxPoint x="400" y="700"/>
+              <mxPoint x="400" y="700"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge_ov_no" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;endArrow=classic;" edge="1" parent="1" source="overflow?" target="prompt_err?">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="400" y="730"/>
+              <mxPoint x="400" y="800"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge_compact_retry" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;endArrow=classic;" edge="1" parent="1" source="compact" target="retry_overflow">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="400" y="745"/>
+              <mxPoint x="610" y="658"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge_retry_loop" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;endArrow=classic;dashed=1;" edge="1" parent="1" source="retry_overflow" target="loop_start">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="610" y="518"/>
+              <mxPoint x="400" y="505"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge_ov_fail" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#C62828;endArrow=classic;" edge="1" parent="1" source="overflow?" target="return_overflow">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="240" y="665"/>
+              <mxPoint x="160" y="665"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge_pe_yes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;endArrow=classic;" edge="1" parent="1" source="prompt_err?" target="advance_profile">
+          <mxGeometry relative="1" as="geometry">
+            <mxPoint as="offset" x="0" y="5"/>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge_pe_no" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;endArrow=classic;" edge="1" parent="1" source="prompt_err?" target="assistant_fail?">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="400" y="860"/>
+              <mxPoint x="400" y="985"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge_adv_loop" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;endArrow=classic;dashed=1;" edge="1" parent="1" source="advance_profile" target="loop_start">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="400" y="905"/>
+              <mxPoint x="400" y="505"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge_af_yes" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#666666;endArrow=classic;" edge="1" parent="1" source="assistant_fail?" target="advance_profile">
+          <mxGeometry relative="1" as="geometry">
+            <Array as="points">
+              <mxPoint x="320" y="985"/>
+              <mxPoint x="400" y="905"/>
+            </Array>
+          </mxGeometry>
+        </mxCell>
+        <mxCell id="edge_af_no" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#388E3C;endArrow=classic;" edge="1" parent="1" source="assistant_fail?" target="build_payloads">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="edge_bp_ret" style="edgeStyle=orthogonalEdgeStyle;rounded=0;html=1;strokeColor=#388E3C;endArrow=classic;" edge="1" parent="1" source="build_payloads" target="return_ok">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>

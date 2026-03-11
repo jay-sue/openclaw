@@ -1,0 +1,117 @@
+<mxfile host="app.diagrams.net">
+  <diagram name="架构图" id="arch">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="900" pageHeight="700" math="0" shadow="0">
+      <root>
+        <mxCell id="0"/>
+        <mxCell id="1" parent="0"/>
+        <!-- 标题 -->
+        <mxCell id="title" value="pi-embedded-runner 架构" style="text;html=1;strokeColor=none;fillColor=none;align=center;verticalAlign=middle;whiteSpace=wrap;rounded=0;fontSize=18;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="320" y="20" width="260" height="36" as="geometry"/>
+        </mxCell>
+        <!-- 入口层 -->
+        <mxCell id="entry_lane" value="入口与调度" style="swimlane;horizontal=0;whiteSpace=wrap;html=1;fillColor=#E3F2FD;strokeColor=#1976D2;startSize=26;" vertex="1" parent="1">
+          <mxGeometry x="40" y="70" width="820" height="100" as="geometry"/>
+        </mxCell>
+        <mxCell id="run_ts" value="run.ts&#xa;runEmbeddedPiAgent" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1976D2;" vertex="1" parent="entry_lane">
+          <mxGeometry x="20" y="40" width="140" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="runs_ts" value="runs.ts&#xa;活跃运行注册/中止" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1976D2;" vertex="1" parent="entry_lane">
+          <mxGeometry x="180" y="40" width="140" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="lanes_ts" value="lanes.ts&#xa;session/global lane" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1976D2;" vertex="1" parent="entry_lane">
+          <mxGeometry x="340" y="40" width="130" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="abort_ts" value="abort.ts&#xa;isRunnerAbortError" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#BBDEFB;strokeColor=#1976D2;" vertex="1" parent="entry_lane">
+          <mxGeometry x="490" y="40" width="130" height="50" as="geometry"/>
+        </mxCell>
+        <!-- 模型与认证层 -->
+        <mxCell id="model_lane" value="模型与认证" style="swimlane;horizontal=0;whiteSpace=wrap;html=1;fillColor=#E8F5E9;strokeColor=#388E3C;startSize=26;" vertex="1" parent="1">
+          <mxGeometry x="40" y="190" width="820" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="model_ts" value="model.ts&#xa;resolveModel" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#388E3C;" vertex="1" parent="model_lane">
+          <mxGeometry x="20" y="38" width="120" height="42" as="geometry"/>
+        </mxCell>
+        <mxCell id="model_norm" value="model.provider-&#xa;normalization.ts" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#C8E6C9;strokeColor=#388E3C;" vertex="1" parent="model_lane">
+          <mxGeometry x="160" y="38" width="160" height="42" as="geometry"/>
+        </mxCell>
+        <!-- 单次尝试层 run/ -->
+        <mxCell id="attempt_lane" value="单次尝试 (run/)" style="swimlane;horizontal=0;whiteSpace=wrap;html=1;fillColor=#FFF3E0;strokeColor=#E65100;startSize=26;" vertex="1" parent="1">
+          <mxGeometry x="40" y="300" width="820" height="120" as="geometry"/>
+        </mxCell>
+        <mxCell id="attempt_ts" value="run/attempt.ts&#xa;runEmbeddedAttempt" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#E65100;" vertex="1" parent="attempt_lane">
+          <mxGeometry x="20" y="42" width="160" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="payloads_ts" value="run/payloads.ts&#xa;buildEmbeddedRunPayloads" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#E65100;" vertex="1" parent="attempt_lane">
+          <mxGeometry x="200" y="42" width="180" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="images_ts" value="run/images.ts&#xa;run/history-image-prune" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#E65100;" vertex="1" parent="attempt_lane">
+          <mxGeometry x="400" y="42" width="160" height="50" as="geometry"/>
+        </mxCell>
+        <mxCell id="compaction_timeout" value="compaction-timeout&#xa;failover-observation" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFE0B2;strokeColor=#E65100;" vertex="1" parent="attempt_lane">
+          <mxGeometry x="580" y="42" width="180" height="50" as="geometry"/>
+        </mxCell>
+        <!-- 压缩与历史层 -->
+        <mxCell id="compact_lane" value="压缩与历史" style="swimlane;horizontal=0;whiteSpace=wrap;html=1;fillColor=#F3E5F5;strokeColor=#7B1FA2;startSize=26;" vertex="1" parent="1">
+          <mxGeometry x="40" y="440" width="820" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="compact_ts" value="compact.ts&#xa;compactEmbeddedPiSession" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#7B1FA2;" vertex="1" parent="compact_lane">
+          <mxGeometry x="20" y="38" width="180" height="42" as="geometry"/>
+        </mxCell>
+        <mxCell id="history_ts" value="history.ts&#xa;limitHistoryTurns" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#7B1FA2;" vertex="1" parent="compact_lane">
+          <mxGeometry x="220" y="38" width="140" height="42" as="geometry"/>
+        </mxCell>
+        <mxCell id="system_prompt_ts" value="system-prompt.ts" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#7B1FA2;" vertex="1" parent="compact_lane">
+          <mxGeometry x="380" y="38" width="130" height="42" as="geometry"/>
+        </mxCell>
+        <mxCell id="compaction_safety" value="compaction-safety-timeout" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#E1BEE7;strokeColor=#7B1FA2;" vertex="1" parent="compact_lane">
+          <mxGeometry x="530" y="38" width="180" height="42" as="geometry"/>
+        </mxCell>
+        <!-- 工具与扩展层 -->
+        <mxCell id="tools_lane" value="工具与扩展" style="swimlane;horizontal=0;whiteSpace=wrap;html=1;fillColor=#FFF9C4;strokeColor=#F57F17;startSize=26;" vertex="1" parent="1">
+          <mxGeometry x="40" y="550" width="820" height="90" as="geometry"/>
+        </mxCell>
+        <mxCell id="extensions_ts" value="extensions.ts" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF59D;strokeColor=#F57F17;" vertex="1" parent="tools_lane">
+          <mxGeometry x="20" y="38" width="110" height="42" as="geometry"/>
+        </mxCell>
+        <mxCell id="tool_allowlist" value="tool-name-allowlist&#xa;tool-split" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF59D;strokeColor=#F57F17;" vertex="1" parent="tools_lane">
+          <mxGeometry x="150" y="38" width="140" height="42" as="geometry"/>
+        </mxCell>
+        <mxCell id="tool_truncation" value="tool-result-&#xa;truncation/context-guard" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF59D;strokeColor=#F57F17;" vertex="1" parent="tools_lane">
+          <mxGeometry x="310" y="38" width="180" height="42" as="geometry"/>
+        </mxCell>
+        <mxCell id="stream_wrappers" value="*stream-wrappers&#xa;google / extra-params" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#FFF59D;strokeColor=#F57F17;" vertex="1" parent="tools_lane">
+          <mxGeometry x="510" y="38" width="160" height="42" as="geometry"/>
+        </mxCell>
+        <!-- 类型与公共 -->
+        <mxCell id="types_lane" value="类型与公共" style="swimlane;horizontal=0;whiteSpace=wrap;html=1;fillColor=#E0F2F1;strokeColor=#00796B;startSize=26;" vertex="1" parent="1">
+          <mxGeometry x="40" y="660" width="820" height="70" as="geometry"/>
+        </mxCell>
+        <mxCell id="types_ts" value="types.ts" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#B2DFDB;strokeColor=#00796B;" vertex="1" parent="types_lane">
+          <mxGeometry x="20" y="32" width="100" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="params_ts" value="run/params.ts&#xa;run/types.ts" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#B2DFDB;strokeColor=#00796B;" vertex="1" parent="types_lane">
+          <mxGeometry x="140" y="32" width="120" height="30" as="geometry"/>
+        </mxCell>
+        <mxCell id="logger_utils" value="logger.ts&#xa;utils.ts" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#B2DFDB;strokeColor=#00796B;" vertex="1" parent="types_lane">
+          <mxGeometry x="280" y="32" width="100" height="30" as="geometry"/>
+        </mxCell>
+        <!-- 边：run -> attempt -->
+        <mxCell id="e1" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#666666;strokeWidth=2;endArrow=classic;" edge="1" parent="1" source="run_ts" target="attempt_ts">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e2" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#666666;strokeWidth=2;endArrow=classic;" edge="1" parent="1" source="run_ts" target="model_ts">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e3" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#666666;strokeWidth=2;endArrow=classic;" edge="1" parent="1" source="run_ts" target="runs_ts">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e4" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#666666;strokeWidth=2;endArrow=classic;" edge="1" parent="1" source="attempt_ts" target="payloads_ts">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+        <mxCell id="e5" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;strokeColor=#666666;strokeWidth=2;endArrow=classic;" edge="1" parent="1" source="run_ts" target="compact_ts">
+          <mxGeometry relative="1" as="geometry"/>
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
