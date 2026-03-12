@@ -151,27 +151,41 @@ type PromptBuildHookRunner = {
   ) => Promise<PluginHookBeforeAgentStartResult | undefined>;
 };
 
-/** 判断当前 model 是否为 Ollama 或兼容 Ollama 的端点（本地 11434 或 provider 名含 ollama 的远程） */
+/**
+ * 判断当前 model 是否为 Ollama 或兼容 Ollama 的端点。
+ *
+ * 判断逻辑：
+ * 1. provider 归一化后为 "ollama" → 是
+ * 2. baseUrl 指向本地（localhost/127.0.0.1/::1）且端口为 11434 → 是
+ * 3. provider 名包含 "ollama"、端口为 11434、路径为 "/" 或 "/v1" → 是（支持远程 Ollama OpenAI 兼容端点）
+ *
+ * @param model - 模型配置对象，包含 provider、baseUrl、api 字段
+ * @returns 是否为 Ollama 兼容的提供商
+ */
 export function isOllamaCompatProvider(model: {
   provider?: string;
   baseUrl?: string;
   api?: string;
 }): boolean {
+  // 将 provider 归一化（统一大小写、去除空格等）
   const providerId = normalizeProviderId(model.provider ?? "");
   if (providerId === "ollama") {
     return true;
   }
+  // 无 baseUrl 则无法判断是否为远程 Ollama
   if (!model.baseUrl) {
     return false;
   }
   try {
     const parsed = new URL(model.baseUrl);
     const hostname = parsed.hostname.toLowerCase();
+    // 检测是否为本地地址（localhost、IPv4 回环、IPv6 回环）
     const isLocalhost =
       hostname === "localhost" ||
       hostname === "127.0.0.1" ||
       hostname === "::1" ||
       hostname === "[::1]";
+    // 本地 Ollama 默认监听 11434 端口
     if (isLocalhost && parsed.port === "11434") {
       return true;
     }
@@ -179,6 +193,7 @@ export function isOllamaCompatProvider(model: {
     // 当 provider 名本身暗示 Ollama（如 "my-ollama"）时，允许远程/局域网 Ollama OpenAI 兼容端点
     const providerHintsOllama = providerId.includes("ollama");
     const isOllamaPort = parsed.port === "11434";
+    // Ollama OpenAI 兼容路径通常为根路径或 /v1
     const isOllamaCompatPath = parsed.pathname === "/" || /^\/v1\/?$/i.test(parsed.pathname);
     return providerHintsOllama && isOllamaPort && isOllamaCompatPath;
   } catch {
@@ -186,22 +201,38 @@ export function isOllamaCompatProvider(model: {
   }
 }
 
+/**
+ * 判断是否应为指定 provider 启用 num_ctx 注入。
+ *
+ * 配置层级优先级：
+ * 1. 精确匹配 provider 配置中的 injectNumCtxForOpenAICompat 字段
+ * 2. 归一化匹配（如 "My-Ollama" 与 "my_ollama" 视为相同）
+ * 3. 默认返回 true（启用注入）
+ *
+ * @param params.config - OpenClaw 全局配置
+ * @param params.providerId - 提供商 ID
+ * @returns 是否启用 num_ctx 注入
+ */
 export function resolveOllamaCompatNumCtxEnabled(params: {
   config?: OpenClawConfig;
   providerId?: string;
 }): boolean {
   const providerId = params.providerId?.trim();
+  // 无 providerId 时默认启用
   if (!providerId) {
     return true;
   }
   const providers = params.config?.models?.providers;
+  // 无 providers 配置时默认启用
   if (!providers) {
     return true;
   }
+  // 精确匹配 provider 配置
   const direct = providers[providerId];
   if (direct) {
     return direct.injectNumCtxForOpenAICompat ?? true;
   }
+  // 归一化后模糊匹配
   const normalized = normalizeProviderId(providerId);
   for (const [candidateId, candidate] of Object.entries(providers)) {
     if (normalizeProviderId(candidateId) === normalized) {
@@ -211,59 +242,105 @@ export function resolveOllamaCompatNumCtxEnabled(params: {
   return true;
 }
 
+/**
+ * 综合判断是否应为当前请求注入 Ollama 的 num_ctx 参数。
+ *
+ * 同时满足以下条件才返回 true：
+ * 1. 模型使用 OpenAI 兼容 API (api === "openai-completions")
+ * 2. 模型是 Ollama 兼容提供商
+ * 3. 配置未禁用 num_ctx 注入
+ *
+ * @param params.model - 模型配置
+ * @param params.config - OpenClaw 全局配置
+ * @param params.providerId - 提供商 ID
+ * @returns 是否应注入 num_ctx
+ */
 export function shouldInjectOllamaCompatNumCtx(params: {
   model: { api?: string; provider?: string; baseUrl?: string };
   config?: OpenClawConfig;
   providerId?: string;
 }): boolean {
-  // 仅限走 OpenAI 兼容适配器路径
+  // 仅限走 OpenAI 兼容适配器路径；原生 Ollama API 不需要此注入
   if (params.model.api !== "openai-completions") {
     return false;
   }
+  // 非 Ollama 兼容端点无需注入
   if (!isOllamaCompatProvider(params.model)) {
     return false;
   }
+  // 检查配置是否禁用了 num_ctx 注入
   return resolveOllamaCompatNumCtxEnabled({
     config: params.config,
     providerId: params.providerId,
   });
 }
 
+/**
+ * 包装 StreamFn，为 Ollama 兼容端点注入 num_ctx 参数。
+ * Ollama 在使用 OpenAI 兼容 API 时默认上下文为 4096 token，需要显式设置 num_ctx 以使用更大的上下文窗口。
+ * 该函数在 payload.options 中添加 num_ctx 字段后再传递给下游 onPayload 回调。
+ *
+ * @param baseFn - 原始流函数；若为空则使用 streamSimple
+ * @param numCtx - 要注入的上下文窗口大小（token 数量）
+ * @returns 包装后的 StreamFn
+ */
 export function wrapOllamaCompatNumCtx(baseFn: StreamFn | undefined, numCtx: number): StreamFn {
   const streamFn = baseFn ?? streamSimple;
   return (model, context, options) =>
     streamFn(model, context, {
       ...options,
-      onPayload: (payload: unknown) => {
+      onPayload: (payload: unknown, payloadModel) => {
+        // 若 payload 非对象则直接透传给下游
         if (!payload || typeof payload !== "object") {
-          return options?.onPayload?.(payload);
+          return options?.onPayload?.(payload, payloadModel);
         }
         const payloadRecord = payload as Record<string, unknown>;
+        // 确保 options 字段存在
         if (!payloadRecord.options || typeof payloadRecord.options !== "object") {
           payloadRecord.options = {};
         }
+        // 将 num_ctx 注入到 payload.options 中，使 Ollama 使用指定的上下文长度
         (payloadRecord.options as Record<string, unknown>).num_ctx = numCtx;
-        return options?.onPayload?.(payload);
+        return options?.onPayload?.(payload, payloadModel);
       },
     });
 }
 
+/**
+ * 规范化工具调用名称，使其与已注册的工具名匹配。
+ *
+ * 部分模型返回的工具名可能带有前缀、命名空间或错误的大小写（如 "mcp.read" 或 "READ"），
+ * 该函数尝试将其映射到 allowedToolNames 中的正确名称。
+ *
+ * 匹配策略（按优先级）：
+ * 1. 精确匹配 trimmed 或其规范化形式
+ * 2. 尝试去掉前缀后的后缀匹配（如 "namespace.toolName" → "toolName"）
+ * 3. 大小写不敏感匹配（仅当唯一时才采用）
+ *
+ * @param rawName - 原始工具名
+ * @param allowedToolNames - 允许的工具名集合
+ * @returns 规范化后的工具名
+ */
 function normalizeToolCallNameForDispatch(rawName: string, allowedToolNames?: Set<string>): string {
   const trimmed = rawName.trim();
   if (!trimmed) {
     // 保留仅空白的占位符不变，避免被规约为空串导致后续出现 toolName="" 死循环
     return rawName;
   }
+  // 无允许列表时直接返回裁剪后的名称
   if (!allowedToolNames || allowedToolNames.size === 0) {
     return trimmed;
   }
 
+  // 构建候选名称集合：原名 + 规范化名
   const candidateNames = new Set<string>([trimmed, normalizeToolName(trimmed)]);
+  // 将 "/" 替换为 "." 后按段分割，生成后缀候选
   const normalizedDelimiter = trimmed.replace(/\//g, ".");
   const segments = normalizedDelimiter
     .split(".")
     .map((segment) => segment.trim())
     .filter(Boolean);
+  // 对于多段名称，尝试逐级去掉前缀作为候选
   if (segments.length > 1) {
     for (let index = 1; index < segments.length; index += 1) {
       const suffix = segments.slice(index).join(".");
@@ -272,12 +349,14 @@ function normalizeToolCallNameForDispatch(rawName: string, allowedToolNames?: Se
     }
   }
 
+  // 精确匹配
   for (const candidate of candidateNames) {
     if (allowedToolNames.has(candidate)) {
       return candidate;
     }
   }
 
+  // 大小写不敏感匹配（仅当唯一匹配时采用）
   for (const candidate of candidateNames) {
     const folded = candidate.toLowerCase();
     let caseInsensitiveMatch: string | null = null;
@@ -285,6 +364,7 @@ function normalizeToolCallNameForDispatch(rawName: string, allowedToolNames?: Se
       if (name.toLowerCase() !== folded) {
         continue;
       }
+      // 如果已有一个匹配且不相同，说明存在歧义，放弃匹配
       if (caseInsensitiveMatch && caseInsensitiveMatch !== name) {
         return candidate;
       }
@@ -298,10 +378,25 @@ function normalizeToolCallNameForDispatch(rawName: string, allowedToolNames?: Se
   return trimmed;
 }
 
+/**
+ * 判断内容块类型是否为工具调用。
+ * 不同 API 使用不同的类型名称：toolCall、toolUse、functionCall。
+ */
 function isToolCallBlockType(type: unknown): boolean {
   return type === "toolCall" || type === "toolUse" || type === "functionCall";
 }
 
+/**
+ * 规范化消息中工具调用的 ID。
+ *
+ * 处理逻辑：
+ * 1. 去除 ID 首尾空白
+ * 2. 为空 ID 或无 ID 的工具调用生成唯一回退 ID（call_auto_N）
+ *
+ * 这解决了部分模型返回空白或缺失工具 ID 的问题，确保后续 tool_result 能正确配对。
+ *
+ * @param message - 要处理的消息对象
+ */
 function normalizeToolCallIdsInMessage(message: unknown): void {
   if (!message || typeof message !== "object") {
     return;
@@ -311,6 +406,7 @@ function normalizeToolCallIdsInMessage(message: unknown): void {
     return;
   }
 
+  // 第一遍：收集已使用的有效 ID
   const usedIds = new Set<string>();
   for (const block of content) {
     if (!block || typeof block !== "object") {
@@ -327,6 +423,7 @@ function normalizeToolCallIdsInMessage(message: unknown): void {
     usedIds.add(trimmedId);
   }
 
+  // 第二遍：规范化 ID 或生成回退 ID
   let fallbackIndex = 1;
   for (const block of content) {
     if (!block || typeof block !== "object") {
@@ -336,6 +433,7 @@ function normalizeToolCallIdsInMessage(message: unknown): void {
     if (!isToolCallBlockType(typedBlock.type)) {
       continue;
     }
+    // 有效 ID：去除首尾空白
     if (typeof typedBlock.id === "string") {
       const trimmedId = typedBlock.id.trim();
       if (trimmedId) {
@@ -347,6 +445,7 @@ function normalizeToolCallIdsInMessage(message: unknown): void {
       }
     }
 
+    // 无效或空 ID：生成唯一回退 ID
     let fallbackId = "";
     while (!fallbackId || usedIds.has(fallbackId)) {
       fallbackId = `call_auto_${fallbackIndex++}`;
@@ -356,6 +455,16 @@ function normalizeToolCallIdsInMessage(message: unknown): void {
   }
 }
 
+/**
+ * 规范化消息中所有工具调用的名称和 ID。
+ *
+ * 该函数遍历消息的 content 数组，对每个工具调用块：
+ * 1. 将工具名映射到 allowedToolNames 中的正确名称
+ * 2. 规范化工具调用 ID（去空白、生成回退 ID）
+ *
+ * @param message - 要处理的消息对象
+ * @param allowedToolNames - 允许的工具名集合
+ */
 function trimWhitespaceFromToolCallNamesInMessage(
   message: unknown,
   allowedToolNames?: Set<string>,
@@ -367,6 +476,7 @@ function trimWhitespaceFromToolCallNamesInMessage(
   if (!Array.isArray(content)) {
     return;
   }
+  // 规范化每个工具调用块的名称
   for (const block of content) {
     if (!block || typeof block !== "object") {
       continue;
@@ -380,13 +490,22 @@ function trimWhitespaceFromToolCallNamesInMessage(
       typedBlock.name = normalized;
     }
   }
+  // 同时规范化 ID
   normalizeToolCallIdsInMessage(message);
 }
 
+/**
+ * 包装流对象，在每次迭代和最终结果中规范化工具调用名称。
+ *
+ * @param stream - 原始流对象
+ * @param allowedToolNames - 允许的工具名集合
+ * @returns 包装后的流对象
+ */
 function wrapStreamTrimToolCallNames(
   stream: ReturnType<typeof streamSimple>,
   allowedToolNames?: Set<string>,
 ): ReturnType<typeof streamSimple> {
+  // 包装 result() 方法
   const originalResult = stream.result.bind(stream);
   stream.result = async () => {
     const message = await originalResult();
@@ -394,6 +513,7 @@ function wrapStreamTrimToolCallNames(
     return message;
   };
 
+  // 包装异步迭代器，在每个事件中规范化工具名
   const originalAsyncIterator = stream[Symbol.asyncIterator].bind(stream);
   (stream as { [Symbol.asyncIterator]: typeof originalAsyncIterator })[Symbol.asyncIterator] =
     function () {
@@ -406,6 +526,7 @@ function wrapStreamTrimToolCallNames(
               partial?: unknown;
               message?: unknown;
             };
+            // 对流式部分和完整消息都进行规范化
             trimWhitespaceFromToolCallNamesInMessage(event.partial, allowedToolNames);
             trimWhitespaceFromToolCallNamesInMessage(event.message, allowedToolNames);
           }
@@ -423,12 +544,23 @@ function wrapStreamTrimToolCallNames(
   return stream;
 }
 
+/**
+ * 包装 StreamFn，在流式响应中规范化工具调用名称。
+ *
+ * 部分模型（如某些 Ollama 模型）返回的工具名带首尾空格，
+ * pi-agent-core 按字符串精确匹配分发，因此需要在执行前规范化。
+ *
+ * @param baseFn - 原始流函数
+ * @param allowedToolNames - 允许的工具名集合
+ * @returns 包装后的流函数
+ */
 export function wrapStreamFnTrimToolCallNames(
   baseFn: StreamFn,
   allowedToolNames?: Set<string>,
 ): StreamFn {
   return (model, context, options) => {
     const maybeStream = baseFn(model, context, options);
+    // 处理可能返回 Promise 的情况
     if (maybeStream && typeof maybeStream === "object" && "then" in maybeStream) {
       return Promise.resolve(maybeStream).then((stream) =>
         wrapStreamTrimToolCallNames(stream, allowedToolNames),
@@ -442,8 +574,20 @@ export function wrapStreamFnTrimToolCallNames(
 // xAI / Grok：对 tool call 参数中的 HTML 实体解码，避免 API 返回的 &amp; 等导致解析错误
 // ---------------------------------------------------------------------------
 
+/** 用于快速检测字符串是否包含 HTML 实体的正则 */
 const HTML_ENTITY_RE = /&(?:amp|lt|gt|quot|apos|#39|#x[0-9a-f]+|#\d+);/i;
 
+/**
+ * 解码字符串中的 HTML 实体。
+ *
+ * 支持的实体：
+ * - 命名实体：&amp; &quot; &apos; &#39; &lt; &gt;
+ * - 十六进制数字实体：&#xHH;
+ * - 十进制数字实体：&#NNN;
+ *
+ * @param value - 包含 HTML 实体的字符串
+ * @returns 解码后的字符串
+ */
 function decodeHtmlEntities(value: string): string {
   return value
     .replace(/&amp;/gi, "&")
@@ -456,13 +600,25 @@ function decodeHtmlEntities(value: string): string {
     .replace(/&#(\d+);/gi, (_, dec) => String.fromCodePoint(Number.parseInt(dec, 10)));
 }
 
+/**
+ * 递归解码对象中所有字符串值的 HTML 实体。
+ *
+ * xAI/Grok API 有时会在工具调用参数中返回 HTML 转义的字符（如 &amp; 代替 &），
+ * 这会导致工具参数解析错误。该函数递归遍历对象并解码所有字符串。
+ *
+ * @param obj - 要处理的对象/数组/字符串
+ * @returns 解码后的值
+ */
 export function decodeHtmlEntitiesInObject(obj: unknown): unknown {
+  // 字符串：检测并解码
   if (typeof obj === "string") {
     return HTML_ENTITY_RE.test(obj) ? decodeHtmlEntities(obj) : obj;
   }
+  // 数组：递归处理每个元素
   if (Array.isArray(obj)) {
     return obj.map(decodeHtmlEntitiesInObject);
   }
+  // 对象：递归处理每个属性值
   if (obj && typeof obj === "object") {
     const result: Record<string, unknown> = {};
     for (const [key, val] of Object.entries(obj as Record<string, unknown>)) {
@@ -470,9 +626,15 @@ export function decodeHtmlEntitiesInObject(obj: unknown): unknown {
     }
     return result;
   }
+  // 其他类型：原样返回
   return obj;
 }
 
+/**
+ * 解码消息中所有 xAI 工具调用参数里的 HTML 实体。
+ *
+ * @param message - 要处理的消息对象
+ */
 function decodeXaiToolCallArgumentsInMessage(message: unknown): void {
   if (!message || typeof message !== "object") {
     return;
@@ -486,6 +648,7 @@ function decodeXaiToolCallArgumentsInMessage(message: unknown): void {
       continue;
     }
     const typedBlock = block as { type?: unknown; arguments?: unknown };
+    // 仅处理 toolCall 类型且有 arguments 的块
     if (typedBlock.type !== "toolCall" || !typedBlock.arguments) {
       continue;
     }
@@ -495,9 +658,16 @@ function decodeXaiToolCallArgumentsInMessage(message: unknown): void {
   }
 }
 
+/**
+ * 包装流对象，解码 xAI 工具调用参数中的 HTML 实体。
+ *
+ * @param stream - 原始流对象
+ * @returns 包装后的流对象
+ */
 function wrapStreamDecodeXaiToolCallArguments(
   stream: ReturnType<typeof streamSimple>,
 ): ReturnType<typeof streamSimple> {
+  // 包装 result() 方法
   const originalResult = stream.result.bind(stream);
   stream.result = async () => {
     const message = await originalResult();
@@ -505,6 +675,7 @@ function wrapStreamDecodeXaiToolCallArguments(
     return message;
   };
 
+  // 包装异步迭代器
   const originalAsyncIterator = stream[Symbol.asyncIterator].bind(stream);
   (stream as { [Symbol.asyncIterator]: typeof originalAsyncIterator })[Symbol.asyncIterator] =
     function () {
@@ -530,9 +701,19 @@ function wrapStreamDecodeXaiToolCallArguments(
   return stream;
 }
 
+/**
+ * 包装 StreamFn，解码 xAI 工具调用参数中的 HTML 实体。
+ *
+ * xAI/Grok API 有时会在工具参数中返回 HTML 转义字符，该包装器确保这些
+ * 实体在工具执行前被正确解码。
+ *
+ * @param baseFn - 原始流函数
+ * @returns 包装后的流函数
+ */
 function wrapStreamFnDecodeXaiToolCallArguments(baseFn: StreamFn): StreamFn {
   return (model, context, options) => {
     const maybeStream = baseFn(model, context, options);
+    // 处理可能返回 Promise 的情况
     if (maybeStream && typeof maybeStream === "object" && "then" in maybeStream) {
       return Promise.resolve(maybeStream).then((stream) =>
         wrapStreamDecodeXaiToolCallArguments(stream),
@@ -542,6 +723,21 @@ function wrapStreamFnDecodeXaiToolCallArguments(baseFn: StreamFn): StreamFn {
   };
 }
 
+/**
+ * 解析 prompt 构建钩子的结果，合并 before_prompt_build 和旧版 before_agent_start 的输出。
+ *
+ * 该函数执行以下步骤：
+ * 1. 调用 before_prompt_build 钩子（如果存在）
+ * 2. 调用 before_agent_start 钩子（旧版兼容，如果存在且未提供 legacyBeforeAgentStartResult）
+ * 3. 合并两个钩子的结果，before_prompt_build 优先
+ *
+ * @param params.prompt - 当前 prompt
+ * @param params.messages - 会话历史消息
+ * @param params.hookCtx - 钩子上下文（agent ID、session 信息等）
+ * @param params.hookRunner - 钩子运行器
+ * @param params.legacyBeforeAgentStartResult - 已执行的旧版钩子结果（可选）
+ * @returns 合并后的钩子结果
+ */
 export async function resolvePromptBuildHookResult(params: {
   prompt: string;
   messages: unknown[];
@@ -549,6 +745,7 @@ export async function resolvePromptBuildHookResult(params: {
   hookRunner?: PromptBuildHookRunner | null;
   legacyBeforeAgentStartResult?: PluginHookBeforeAgentStartResult;
 }): Promise<PluginHookBeforePromptBuildResult> {
+  // 执行新版 before_prompt_build 钩子
   const promptBuildResult = params.hookRunner?.hasHooks("before_prompt_build")
     ? await params.hookRunner
         .runBeforePromptBuild(
@@ -563,6 +760,8 @@ export async function resolvePromptBuildHookResult(params: {
           return undefined;
         })
     : undefined;
+
+  // 执行旧版 before_agent_start 钩子（向后兼容）
   const legacyResult =
     params.legacyBeforeAgentStartResult ??
     (params.hookRunner?.hasHooks("before_agent_start")
@@ -581,6 +780,8 @@ export async function resolvePromptBuildHookResult(params: {
             return undefined;
           })
       : undefined);
+
+  // 合并结果：新版优先，旧版补充
   return {
     systemPrompt: promptBuildResult?.systemPrompt ?? legacyResult?.systemPrompt,
     prependContext: joinPresentTextSegments([
@@ -598,6 +799,14 @@ export async function resolvePromptBuildHookResult(params: {
   };
 }
 
+/**
+ * 将钩子提供的上下文片段（prepend/append）合并到基础系统提示中。
+ *
+ * @param params.baseSystemPrompt - 基础系统提示
+ * @param params.prependSystemContext - 要插入到系统提示开头的内容
+ * @param params.appendSystemContext - 要追加到系统提示末尾的内容
+ * @returns 合并后的系统提示；若无内容需合并则返回 undefined
+ */
 export function composeSystemPromptWithHookContext(params: {
   baseSystemPrompt?: string;
   prependSystemContext?: string;
@@ -605,15 +814,26 @@ export function composeSystemPromptWithHookContext(params: {
 }): string | undefined {
   const prependSystem = params.prependSystemContext?.trim();
   const appendSystem = params.appendSystemContext?.trim();
+  // 无需合并时返回 undefined，避免不必要的字符串操作
   if (!prependSystem && !appendSystem) {
     return undefined;
   }
+  // 按顺序拼接：前置上下文 + 基础提示 + 后置上下文
   return joinPresentTextSegments(
     [params.prependSystemContext, params.baseSystemPrompt, params.appendSystemContext],
     { trim: true },
   );
 }
 
+/**
+ * 根据会话类型决定系统提示模式。
+ *
+ * - subagent 会话和 cron 会话使用 "minimal" 模式（精简提示）
+ * - 其他会话使用 "full" 模式（完整提示）
+ *
+ * @param sessionKey - 会话标识符
+ * @returns 提示模式
+ */
 export function resolvePromptModeForSession(sessionKey?: string): "minimal" | "full" {
   if (!sessionKey) {
     return "full";
@@ -621,6 +841,13 @@ export function resolvePromptModeForSession(sessionKey?: string): "minimal" | "f
   return isSubagentSessionKey(sessionKey) || isCronSessionKey(sessionKey) ? "minimal" : "full";
 }
 
+/**
+ * 判断当前尝试是否应限制文件系统访问仅限工作区。
+ *
+ * @param params.config - OpenClaw 配置
+ * @param params.sessionAgentId - 会话的 agent ID
+ * @returns 是否限制文件访问仅限工作区
+ */
 export function resolveAttemptFsWorkspaceOnly(params: {
   config?: OpenClawConfig;
   sessionAgentId: string;
@@ -631,6 +858,13 @@ export function resolveAttemptFsWorkspaceOnly(params: {
   });
 }
 
+/**
+ * 将额外内容插入到系统提示开头。
+ *
+ * @param params.systemPrompt - 原始系统提示
+ * @param params.systemPromptAddition - 要插入的额外内容
+ * @returns 合并后的系统提示
+ */
 export function prependSystemPromptAddition(params: {
   systemPrompt: string;
   systemPromptAddition?: string;
@@ -641,7 +875,17 @@ export function prependSystemPromptAddition(params: {
   return `${params.systemPromptAddition}\n\n${params.systemPrompt}`;
 }
 
-/** 构建传入 context-engine afterTurn 钩子的运行时上下文 */
+/**
+ * 构建传入 context-engine afterTurn 钩子的运行时上下文。
+ *
+ * 该上下文包含当前尝试的关键参数，供 context engine 在每轮对话后执行清理、
+ * 索引更新等操作时使用。
+ *
+ * @param params.attempt - 当前尝试的参数子集
+ * @param params.workspaceDir - 工作区目录
+ * @param params.agentDir - agent 数据目录
+ * @returns context engine 所需的运行时上下文
+ */
 export function buildAfterTurnRuntimeContext(params: {
   attempt: Pick<
     EmbeddedRunAttemptParams,
@@ -685,15 +929,26 @@ export function buildAfterTurnRuntimeContext(params: {
   };
 }
 
+/**
+ * 统计单条消息的文本字符数和图片块数。
+ *
+ * 用于诊断上下文大小，帮助排查提前溢出问题。
+ *
+ * @param msg - 要统计的消息
+ * @returns 文本字符数和图片块数
+ */
 function summarizeMessagePayload(msg: AgentMessage): { textChars: number; imageBlocks: number } {
   const content = (msg as { content?: unknown }).content;
+  // 纯字符串内容
   if (typeof content === "string") {
     return { textChars: content.length, imageBlocks: 0 };
   }
+  // 非数组内容（如空消息）
   if (!Array.isArray(content)) {
     return { textChars: 0, imageBlocks: 0 };
   }
 
+  // 遍历内容块，分别统计文本和图片
   let textChars = 0;
   let imageBlocks = 0;
   for (const block of content) {
@@ -713,12 +968,27 @@ function summarizeMessagePayload(msg: AgentMessage): { textChars: number; imageB
   return { textChars, imageBlocks };
 }
 
+/**
+ * 汇总整个会话上下文的统计信息。
+ *
+ * 统计内容包括：
+ * - 各角色的消息数量
+ * - 总文本字符数
+ * - 总图片块数
+ * - 单条消息的最大文本字符数
+ *
+ * 用于 debug 日志，帮助诊断上下文溢出问题。
+ *
+ * @param messages - 会话消息数组
+ * @returns 汇总统计信息
+ */
 function summarizeSessionContext(messages: AgentMessage[]): {
   roleCounts: string;
   totalTextChars: number;
   totalImageBlocks: number;
   maxMessageTextChars: number;
 } {
+  // 按角色统计消息数
   const roleCounts = new Map<string, number>();
   let totalTextChars = 0;
   let totalImageBlocks = 0;
@@ -731,12 +1001,14 @@ function summarizeSessionContext(messages: AgentMessage[]): {
     const payload = summarizeMessagePayload(msg);
     totalTextChars += payload.textChars;
     totalImageBlocks += payload.imageBlocks;
+    // 记录单条消息的最大文本量
     if (payload.textChars > maxMessageTextChars) {
       maxMessageTextChars = payload.textChars;
     }
   }
 
   return {
+    // 格式化角色计数为 "assistant:5,user:4" 形式
     roleCounts:
       [...roleCounts.entries()]
         .toSorted((a, b) => a[0].localeCompare(b[0]))
@@ -748,41 +1020,106 @@ function summarizeSessionContext(messages: AgentMessage[]): {
   };
 }
 
+/**
+ * 执行单次嵌入式 agent 尝试。
+ *
+ * 这是嵌入式 Pi agent 运行的核心函数，负责完整的会话流程：
+ *
+ * 1. **环境准备**
+ *    - 解析工作区路径，创建目录
+ *    - 设置沙箱环境（如果启用）
+ *    - 加载技能配置和环境变量
+ *
+ * 2. **Bootstrap 文件加载**
+ *    - 加载 AGENTS.md/CLAUDE.md 等引导文件
+ *    - 分析并检测上下文预算使用情况
+ *
+ * 3. **会话管理**
+ *    - 获取会话写锁，防止并发写入
+ *    - 加载或创建 SessionManager
+ *    - 限制历史轮次，清理无效消息
+ *
+ * 4. **系统提示构建**
+ *    - 构建包含运行时信息的系统提示
+ *    - 执行 before_prompt_build 钩子
+ *    - 注入技能提示和上下文
+ *
+ * 5. **模型配置**
+ *    - 选择并配置 StreamFn（OpenAI/Anthropic/Google/Ollama/WS 等）
+ *    - 应用额外参数和包装器
+ *
+ * 6. **Prompt 执行**
+ *    - 检测并加载图片
+ *    - 执行流式 prompt
+ *    - 订阅并处理工具调用
+ *
+ * 7. **压缩与超时处理**
+ *    - 等待压缩重试完成
+ *    - 处理超时情况，保存快照
+ *
+ * 8. **清理与返回**
+ *    - 执行 afterTurn 钩子
+ *    - 释放资源和锁
+ *    - 返回尝试结果
+ *
+ * @param params - 嵌入式运行尝试参数
+ * @returns 尝试结果，包含消息快照、工具元数据、错误信息等
+ */
 export async function runEmbeddedAttempt(
   params: EmbeddedRunAttemptParams,
 ): Promise<EmbeddedRunAttemptResult> {
+  // 解析并规范化工作区路径
   const resolvedWorkspace = resolveUserPath(params.workspaceDir);
+  // 保存当前工作目录，便于后续恢复
   const prevCwd = process.cwd();
+  // 创建本次运行专用的中止控制器
   const runAbortController = new AbortController();
+  // 确保全局 undici 流超时配置已初始化
   ensureGlobalUndiciStreamTimeouts();
 
   log.debug(
     `embedded run start: runId=${params.runId} sessionId=${params.sessionId} provider=${params.provider} model=${params.modelId} thinking=${params.thinkLevel} messageChannel=${params.messageChannel ?? params.messageProvider ?? "unknown"}`,
   );
 
+  // 确保工作区目录存在
   await fs.mkdir(resolvedWorkspace, { recursive: true });
 
+  // -------------------------------------------------------------------------
+  // 阶段 1：沙箱环境解析与工作区设置
+  // -------------------------------------------------------------------------
+
+  // 沙箱会话键：优先使用 sessionKey，否则回退到 sessionId
   const sandboxSessionKey = params.sessionKey?.trim() || params.sessionId;
+  // 解析沙箱配置：检查是否启用沙箱、工作区访问权限等
   const sandbox = await resolveSandboxContext({
     config: params.config,
     sessionKey: sandboxSessionKey,
     workspaceDir: resolvedWorkspace,
   });
+  // 确定实际工作区：沙箱启用时根据访问权限选择目录
   const effectiveWorkspace = sandbox?.enabled
     ? sandbox.workspaceAccess === "rw"
-      ? resolvedWorkspace
-      : sandbox.workspaceDir
+      ? resolvedWorkspace // 读写权限：使用原工作区
+      : sandbox.workspaceDir // 只读权限：使用沙箱隔离目录
     : resolvedWorkspace;
   await fs.mkdir(effectiveWorkspace, { recursive: true });
 
+  // -------------------------------------------------------------------------
+  // 阶段 2：技能加载与环境变量设置
+  // -------------------------------------------------------------------------
+
+  // 保存恢复技能环境变量的清理函数
   let restoreSkillEnv: (() => void) | undefined;
+  // 切换到有效工作区目录
   process.chdir(effectiveWorkspace);
   try {
+    // 解析要加载的技能条目
     const { shouldLoadSkillEntries, skillEntries } = resolveEmbeddedRunSkillEntries({
       workspaceDir: effectiveWorkspace,
       config: params.config,
       skillsSnapshot: params.skillsSnapshot,
     });
+    // 应用技能环境变量覆盖；从快照或实时技能配置加载
     restoreSkillEnv = params.skillsSnapshot
       ? applySkillEnvOverridesFromSnapshot({
           snapshot: params.skillsSnapshot,
@@ -793,6 +1130,7 @@ export async function runEmbeddedAttempt(
           config: params.config,
         });
 
+    // 构建技能提示文本，用于注入系统提示
     const skillsPrompt = resolveSkillsPromptForRun({
       skillsSnapshot: params.skillsSnapshot,
       entries: shouldLoadSkillEntries ? skillEntries : undefined,
@@ -800,7 +1138,12 @@ export async function runEmbeddedAttempt(
       workspaceDir: effectiveWorkspace,
     });
 
+    // -------------------------------------------------------------------------
+    // 阶段 3：Bootstrap 文件加载与上下文预算分析
+    // -------------------------------------------------------------------------
+
     const sessionLabel = params.sessionKey ?? params.sessionId;
+    // 加载 bootstrap 文件（AGENTS.md、CLAUDE.md 等）和上下文文件
     const { bootstrapFiles: hookAdjustedBootstrapFiles, contextFiles } =
       await resolveBootstrapContextForRun({
         workspaceDir: effectiveWorkspace,
@@ -811,8 +1154,10 @@ export async function runEmbeddedAttempt(
         contextMode: params.bootstrapContextMode,
         runKind: params.bootstrapContextRunKind,
       });
+    // 获取 bootstrap 字符数限制配置
     const bootstrapMaxChars = resolveBootstrapMaxChars(params.config);
     const bootstrapTotalMaxChars = resolveBootstrapTotalMaxChars(params.config);
+    // 分析 bootstrap 内容是否超出预算
     const bootstrapAnalysis = analyzeBootstrapBudget({
       files: buildBootstrapInjectionStats({
         bootstrapFiles: hookAdjustedBootstrapFiles,
@@ -821,32 +1166,43 @@ export async function runEmbeddedAttempt(
       bootstrapMaxChars,
       bootstrapTotalMaxChars,
     });
+    // 解析截断警告模式（silent/warn/error）
     const bootstrapPromptWarningMode = resolveBootstrapPromptTruncationWarningMode(params.config);
+    // 构建截断警告（如果有）
     const bootstrapPromptWarning = buildBootstrapPromptWarning({
       analysis: bootstrapAnalysis,
       mode: bootstrapPromptWarningMode,
       seenSignatures: params.bootstrapPromptWarningSignaturesSeen,
       previousSignature: params.bootstrapPromptWarningSignature,
     });
+    // 如果检测到 AGENTS.md 文件，提醒用户提交更改
     const workspaceNotes = hookAdjustedBootstrapFiles.some(
       (file) => file.name === DEFAULT_BOOTSTRAP_FILENAME && !file.missing,
     )
       ? ["Reminder: commit your changes in this workspace after edits."]
       : undefined;
 
+    // -------------------------------------------------------------------------
+    // 阶段 4：Agent 配置与工具创建
+    // -------------------------------------------------------------------------
+
+    // agent 数据目录（存放会话、日志等）
     const agentDir = params.agentDir ?? resolveOpenClawAgentDir();
 
+    // 解析会话的 agent ID：可能是默认 agent 或根据 sessionKey 推导的子 agent
     const { defaultAgentId, sessionAgentId } = resolveSessionAgentIds({
       sessionKey: params.sessionKey,
       config: params.config,
       agentId: params.agentId,
     });
+    // 判断是否限制文件系统访问仅限工作区
     const effectiveFsWorkspaceOnly = resolveAttemptFsWorkspaceOnly({
       config: params.config,
       sessionAgentId,
     });
-    // 判断模型是否支持原生图片输入
+    // 判断模型是否支持原生图片输入（用于视觉任务）
     const modelHasVision = params.model.input?.includes("image") ?? false;
+    // 创建 OpenClaw 编码工具集（read、write、shell、message 等）
     const toolsRaw = params.disableTools
       ? []
       : createOpenClawCodingTools({
@@ -890,20 +1246,32 @@ export async function runEmbeddedAttempt(
             params.requireExplicitMessageTarget ?? isSubagentSessionKey(params.sessionKey),
           disableMessageTool: params.disableMessageTool,
         });
+    // 判断模型是否支持工具调用
     const toolsEnabled = supportsModelTools(params.model);
+    // 为 Google 模型清理工具定义（处理不兼容的 schema 特性）
     const tools = sanitizeToolsForGoogle({
       tools: toolsEnabled ? toolsRaw : [],
       provider: params.provider,
     });
+    // 客户端工具（OpenResponses 托管工具）
     const clientTools = toolsEnabled ? params.clientTools : undefined;
+    // 收集所有允许的工具名称，用于后续名称规范化
     const allowedToolNames = collectAllowedToolNames({
       tools,
       clientTools,
     });
+    // 为 Google 模型记录工具 schema（调试用）
     logToolSchemasForGoogle({ tools, provider: params.provider });
 
+    // -------------------------------------------------------------------------
+    // 阶段 5：运行时信息与系统提示构建
+    // -------------------------------------------------------------------------
+
+    // 获取机器显示名称（用于系统提示）
     const machineName = await getMachineDisplayName();
+    // 规范化消息通道名称（telegram、signal、discord 等）
     const runtimeChannel = normalizeMessageChannel(params.messageChannel ?? params.messageProvider);
+    // 解析通道能力（inlineButtons、reactions 等）
     let runtimeCapabilities = runtimeChannel
       ? (resolveChannelCapabilities({
           cfg: params.config,
@@ -911,6 +1279,7 @@ export async function runEmbeddedAttempt(
           accountId: params.agentAccountId,
         }) ?? [])
       : undefined;
+    // Telegram 特殊处理：检查是否启用内联按钮
     if (runtimeChannel === "telegram" && params.config) {
       const inlineButtonsScope = resolveTelegramInlineButtonsScope({
         cfg: params.config,
@@ -927,6 +1296,7 @@ export async function runEmbeddedAttempt(
         }
       }
     }
+    // 解析反应表情指导（Telegram/Signal 支持）
     const reactionGuidance =
       runtimeChannel && params.config
         ? (() => {
@@ -949,7 +1319,9 @@ export async function runEmbeddedAttempt(
             return undefined;
           })()
         : undefined;
+    // 构建沙箱信息（用于系统提示）
     const sandboxInfo = buildEmbeddedSandboxInfo(sandbox, params.bashElevated);
+    // 判断是否为支持推理标签的提供商（如 Anthropic Claude）
     const reasoningTagHint = isReasoningTagProvider(params.provider);
     // 解析当前通道的消息动作（如 react、edit），用于系统提示
     const channelActions = runtimeChannel
@@ -966,11 +1338,13 @@ export async function runEmbeddedAttempt(
         })
       : undefined;
 
+    // 解析 agent 的默认模型配置
     const defaultModelRef = resolveDefaultModelForAgent({
       cfg: params.config ?? {},
       agentId: sessionAgentId,
     });
     const defaultModelLabel = `${defaultModelRef.provider}/${defaultModelRef.model}`;
+    // 构建系统提示参数：运行时信息、用户时区等
     const { runtimeInfo, userTimezone, userTime, userTimeFormat } = buildSystemPromptParams({
       config: params.config,
       agentId: sessionAgentId,
@@ -989,17 +1363,23 @@ export async function runEmbeddedAttempt(
         channelActions,
       },
     });
+    // 判断是否为默认 agent（影响心跳提示是否注入）
     const isDefaultAgent = sessionAgentId === defaultAgentId;
+    // 决定系统提示模式：subagent/cron 使用 minimal，其他使用 full
     const promptMode = resolvePromptModeForSession(params.sessionKey);
+    // 解析 OpenClaw 文档路径（用于系统提示）
     const docsPath = await resolveOpenClawDocsPath({
       workspaceDir: effectiveWorkspace,
       argv1: process.argv[1],
       cwd: process.cwd(),
       moduleUrl: import.meta.url,
     });
+    // TTS 提示（如果启用语音合成）
     const ttsHint = params.config ? buildTtsSystemPromptHint(params.config) : undefined;
+    // 解析所有者显示设置
     const ownerDisplay = resolveOwnerDisplaySetting(params.config);
 
+    // 构建完整的嵌入式系统提示
     const appendPrompt = buildEmbeddedSystemPrompt({
       workspaceDir: effectiveWorkspace,
       defaultThinkLevel: params.thinkLevel,
@@ -1031,6 +1411,7 @@ export async function runEmbeddedAttempt(
       bootstrapTruncationWarningLines: bootstrapPromptWarning.lines,
       memoryCitationsMode: params.config?.memory?.citations,
     });
+    // 构建系统提示报告（用于调试和审计）
     const systemPromptReport = buildSystemPromptReport({
       source: "run",
       generatedAt: Date.now(),
@@ -1059,8 +1440,13 @@ export async function runEmbeddedAttempt(
       skillsPrompt,
       tools,
     });
+    // 创建系统提示覆盖函数（允许钩子动态修改）
     const systemPromptOverride = createSystemPromptOverride(appendPrompt);
     let systemPromptText = systemPromptOverride();
+
+    // -------------------------------------------------------------------------
+    // 阶段 6：会话管理器初始化
+    // -------------------------------------------------------------------------
 
     // 获取会话写锁，防止并发写同一 session 文件；超时时间由 timeoutMs 推导
     const sessionLock = await acquireSessionWriteLock({
@@ -1070,26 +1456,33 @@ export async function runEmbeddedAttempt(
       }),
     });
 
+    // 会话管理器和会话对象
     let sessionManager: ReturnType<typeof guardSessionManager> | undefined;
     let session: Awaited<ReturnType<typeof createAgentSession>>["session"] | undefined;
+    // 工具结果上下文守卫的清理函数
     let removeToolResultContextGuard: (() => void) | undefined;
     try {
+      // 修复可能损坏的会话文件
       await repairSessionFileIfNeeded({
         sessionFile: params.sessionFile,
         warn: (message) => log.warn(message),
       });
+      // 检查会话文件是否已存在
       const hadSessionFile = await fs
         .stat(params.sessionFile)
         .then(() => true)
         .catch(() => false);
 
+      // 解析转录策略：是否删除 thinking 块、清理 tool call ID 等
       const transcriptPolicy = resolveTranscriptPolicy({
         modelApi: params.model?.api,
         provider: params.provider,
         modelId: params.modelId,
       });
 
+      // 预热会话文件（缓存优化）
       await prewarmSessionFile(params.sessionFile);
+      // 打开并包装会话管理器，添加输入验证守卫
       sessionManager = guardSessionManager(SessionManager.open(params.sessionFile), {
         agentId: sessionAgentId,
         sessionKey: params.sessionKey,
@@ -1097,8 +1490,10 @@ export async function runEmbeddedAttempt(
         allowSyntheticToolResults: transcriptPolicy.allowSyntheticToolResults,
         allowedToolNames,
       });
+      // 记录会话管理器访问（用于 LRU 缓存）
       trackSessionManagerAccess(params.sessionFile);
 
+      // 如果有上下文引擎且会话文件已存在，执行 bootstrap
       if (hadSessionFile && params.contextEngine?.bootstrap) {
         try {
           await params.contextEngine.bootstrap({
@@ -1110,6 +1505,7 @@ export async function runEmbeddedAttempt(
         }
       }
 
+      // 为本次运行准备会话管理器
       await prepareSessionManagerForRun({
         sessionManager,
         sessionFile: params.sessionFile,
@@ -1151,21 +1547,30 @@ export async function runEmbeddedAttempt(
       // 提前获取 hook runner，便于创建工具时使用
       const hookRunner = getGlobalHookRunner();
 
+      // -------------------------------------------------------------------------
+      // 阶段 7：工具分类与会话创建
+      // -------------------------------------------------------------------------
+
+      // 将工具分为内置工具和自定义工具
       const { builtInTools, customTools } = splitSdkTools({
         tools,
         sandboxEnabled: !!sandbox?.enabled,
       });
 
       // 将客户端工具（OpenResponses 托管工具）加入 customTools
+      // 这些工具由客户端执行，而非服务端
       let clientToolCallDetected: { name: string; params: Record<string, unknown> } | null = null;
+      // 解析工具循环检测配置（防止无限循环调用）
       const clientToolLoopDetection = resolveToolLoopDetectionConfig({
         cfg: params.config,
         agentId: sessionAgentId,
       });
+      // 转换客户端工具为工具定义
       const clientToolDefs = clientTools
         ? toClientToolDefinitions(
             clientTools,
             (toolName, toolParams) => {
+              // 当检测到客户端工具调用时记录
               clientToolCallDetected = { name: toolName, params: toolParams };
             },
             {
@@ -1178,8 +1583,10 @@ export async function runEmbeddedAttempt(
           )
         : [];
 
+      // 合并所有自定义工具
       const allCustomTools = [...customTools, ...clientToolDefs];
 
+      // 创建 agent 会话
       ({ session } = await createAgentSession({
         cwd: resolvedWorkspace,
         agentDir,
@@ -1193,11 +1600,14 @@ export async function runEmbeddedAttempt(
         settingsManager,
         resourceLoader,
       }));
+      // 应用系统提示覆盖
       applySystemPromptOverrideToSession(session, systemPromptText);
       if (!session) {
         throw new Error("Embedded agent session missing");
       }
       const activeSession = session;
+
+      // 安装工具结果上下文守卫：防止工具结果超出上下文窗口
       removeToolResultContextGuard = installToolResultContextGuard({
         agent: activeSession.agent,
         contextWindowTokens: Math.max(
@@ -1207,6 +1617,8 @@ export async function runEmbeddedAttempt(
           ),
         ),
       });
+
+      // 创建缓存追踪器（用于调试缓存命中）
       const cacheTrace = createCacheTrace({
         cfg: params.config,
         env: process.env,
@@ -1218,6 +1630,7 @@ export async function runEmbeddedAttempt(
         modelApi: params.model.api,
         workspaceDir: params.workspaceDir,
       });
+      // 创建 Anthropic payload 日志器（用于调试）
       const anthropicPayloadLogger = createAnthropicPayloadLogger({
         env: process.env,
         runId: params.runId,
@@ -1228,6 +1641,10 @@ export async function runEmbeddedAttempt(
         modelApi: params.model.api,
         workspaceDir: params.workspaceDir,
       });
+
+      // -------------------------------------------------------------------------
+      // 阶段 8：StreamFn 配置（根据模型 API 选择传输方式）
+      // -------------------------------------------------------------------------
 
       // Ollama 原生 API：绕过 SDK 的 streamSimple，直接走 /api/chat 以保证流式与工具调用稳定 (#11828)
       if (params.model.api === "ollama") {
@@ -1242,6 +1659,7 @@ export async function runEmbeddedAttempt(
         activeSession.agent.streamFn = ollamaStreamFn;
         ensureCustomApiRegistered(params.model.api, ollamaStreamFn);
       } else if (params.model.api === "openai-responses" && params.provider === "openai") {
+        // OpenAI Responses API：使用 WebSocket 传输以提升实时性
         const wsApiKey = await params.authStorage.getApiKey(params.provider);
         if (wsApiKey) {
           activeSession.agent.streamFn = createOpenAIWebSocketStreamFn(wsApiKey, params.sessionId, {
@@ -1252,6 +1670,7 @@ export async function runEmbeddedAttempt(
           activeSession.agent.streamFn = streamSimple;
         }
       } else {
+        // 默认：使用标准 HTTP 流式传输
         // 固定 streamFn 引用，便于 vitest 稳定 mock @mariozechner/pi-ai
         activeSession.agent.streamFn = streamSimple;
       }
@@ -1261,12 +1680,14 @@ export async function runEmbeddedAttempt(
         typeof params.model.provider === "string" && params.model.provider.trim().length > 0
           ? params.model.provider
           : params.provider;
+      // 判断是否需要注入 num_ctx 参数
       const shouldInjectNumCtx = shouldInjectOllamaCompatNumCtx({
         model: params.model,
         config: params.config,
         providerId: providerIdForNumCtx,
       });
       if (shouldInjectNumCtx) {
+        // 计算要注入的上下文窗口大小
         const numCtx = Math.max(
           1,
           Math.floor(
