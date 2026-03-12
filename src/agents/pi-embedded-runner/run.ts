@@ -1,89 +1,304 @@
 /**
- * 嵌入式 Pi 代理主入口：runEmbeddedPiAgent。
+ * ============================================================================
+ * 嵌入式 Pi 代理主入口模块 (Embedded Pi Agent Runner)
+ * ============================================================================
  *
- * 本模块是 OpenClaw AI 代理系统的核心运行入口，负责以下关键职责：
+ * 本模块是 OpenClaw AI 代理系统的核心运行入口，导出主函数 runEmbeddedPiAgent。
  *
- * 1. **队列调度**：通过 lane 机制（session lane + global lane）确保并发安全
- * 2. **工作区解析**：根据 agentId/sessionKey 解析实际工作目录
- * 3. **钩子执行**：运行 before_model_resolve / before_agent_start 插件钩子
- * 4. **模型与认证解析**：从配置中解析 provider/model 并获取 API Key
- * 5. **多 profile 轮换**：在认证失败、速率限制时自动切换到下一个认证配置
- * 6. **重试循环**：处理 context overflow 压缩、tool result 截断、failover 等
- * 7. **用量汇总**：累计多次 API 调用的 token 用量
+ * 【模块概述】
+ * 这是整个代理系统的"大脑"，负责协调所有组件完成一次完整的用户请求处理。
+ * 从接收用户消息到返回 AI 响应，涉及队列调度、模型选择、认证管理、错误恢复等。
  *
- * 返回 EmbeddedPiRunResult（包含 payloads 响应负载 + meta 元数据）。
+ * 【核心职责】
+ *
+ * 1. **队列调度** (Queueing)
+ *    - 通过双层 lane 机制确保并发安全
+ *    - session lane: 串行化同一会话的请求，防止消息乱序
+ *    - global lane: 控制跨会话的全局并发，防止资源耗尽
+ *
+ * 2. **工作区解析** (Workspace Resolution)
+ *    - 根据 agentId/sessionKey 解析实际工作目录
+ *    - 支持 fallback 机制，确保始终有有效工作区
+ *
+ * 3. **插件钩子执行** (Plugin Hooks)
+ *    - before_model_resolve: 允许插件覆盖模型选择
+ *    - before_agent_start: 允许插件注入运行时配置
+ *    - 支持新旧钩子的兼容性合并
+ *
+ * 4. **模型与认证解析** (Model & Auth Resolution)
+ *    - 从配置中解析 provider/model
+ *    - 获取对应的 API Key
+ *    - 验证上下文窗口大小
+ *
+ * 5. **多 Profile 轮换** (Auth Profile Rotation)
+ *    - 在认证失败时自动切换到下一个认证配置
+ *    - 在速率限制时标记冷却并轮换
+ *    - 支持用户锁定特定 profile
+ *
+ * 6. **重试循环** (Retry Loop)
+ *    - context overflow: 执行自动压缩或 tool result 截断
+ *    - 认证错误: 轮换 auth profile
+ *    - 速率限制: 标记冷却，轮换或 failover
+ *    - 超时: 轮换 profile 或触发模型 failover
+ *
+ * 7. **用量汇总** (Usage Aggregation)
+ *    - 累计多次 API 调用的 token 用量
+ *    - 区分累加值和最后一次调用值
+ *    - 准确计算上下文大小
+ *
+ * 【执行流程图】
+ *
+ * ```
+ * ┌─────────────────┐
+ * │ 用户发送消息    │
+ * └────────┬────────┘
+ *          ↓
+ * ┌─────────────────┐
+ * │ 入队 Session    │ ← 串行化同一会话
+ * │     Lane        │
+ * └────────┬────────┘
+ *          ↓
+ * ┌─────────────────┐
+ * │ 入队 Global     │ ← 控制全局并发
+ * │     Lane        │
+ * └────────┬────────┘
+ *          ↓
+ * ┌─────────────────┐
+ * │ 解析工作区      │
+ * └────────┬────────┘
+ *          ↓
+ * ┌─────────────────┐
+ * │ 运行插件钩子    │ ← before_model_resolve / before_agent_start
+ * └────────┬────────┘
+ *          ↓
+ * ┌─────────────────┐
+ * │ 解析模型配置    │ ← provider/model → Model 对象
+ * └────────┬────────┘
+ *          ↓
+ * ┌─────────────────┐
+ * │ 检查上下文窗口  │ ← 验证大小是否足够
+ * └────────┬────────┘
+ *          ↓
+ * ┌─────────────────┐
+ * │ 解析认证配置    │ ← 获取 API Key，选择 profile
+ * └────────┬────────┘
+ *          ↓
+ * ┌─────────────────────────────────────────┐
+ * │           主 重 试 循 环                │
+ * │  ┌─────────────────────────────────┐   │
+ * │  │ runEmbeddedAttempt()            │   │
+ * │  │ (实际的模型 API 调用)           │   │
+ * │  └───────────────┬─────────────────┘   │
+ * │                  ↓                     │
+ * │  ┌─────────────────────────────────┐   │
+ * │  │ 检查结果                        │   │
+ * │  │ - 成功 → 返回响应               │   │
+ * │  │ - 上下文溢出 → 压缩/截断重试    │   │
+ * │  │ - 认证错误 → 轮换 profile 重试  │   │
+ * │  │ - 速率限制 → 轮换/failover      │   │
+ * │  │ - 超时 → 轮换/failover          │   │
+ * │  └─────────────────────────────────┘   │
+ * └─────────────────────────────────────────┘
+ *          ↓
+ * ┌─────────────────┐
+ * │ 构建响应        │ ← payloads + meta
+ * │ 返回结果        │
+ * └─────────────────┘
+ * ```
+ *
+ * 【返回值】
+ * EmbeddedPiRunResult 对象，包含：
+ * - payloads: 响应负载数组（文本、错误等）
+ * - meta: 运行元数据（用量、耗时、错误信息等）
+ * - 消息工具输出（如果使用了 messaging tool）
+ *
+ * 【相关模块】
+ * - run/attempt.ts: 单次尝试的执行逻辑
+ * - run/payloads.ts: 响应 payload 构建
+ * - model.ts: 模型解析
+ * - auth-profiles.ts: 认证 profile 管理
+ * - context-engine/: 上下文压缩引擎
  */
+
+// ============================================================================
+// Node.js 内置模块
+// ============================================================================
+
+// 加密模块：用于生成随机 ID（如工具调用 ID）
 import { randomBytes } from "node:crypto";
+// 文件系统模块（Promise 版本）：用于创建工作区目录
 import fs from "node:fs/promises";
+// ============================================================================
+// 内部模块导入 - 自动回复相关
+// ============================================================================
+// 思考级别类型定义（off/low/medium/high）
+// 控制模型的 reasoning/thinking 能力级别
 import type { ThinkLevel } from "../../auto-reply/thinking.js";
+// ============================================================================
+// 内部模块导入 - 上下文引擎
+// ============================================================================
+// 上下文引擎初始化和解析函数
+// 上下文引擎负责会话历史的存储、压缩和检索
 import {
-  ensureContextEnginesInitialized,
-  resolveContextEngine,
+  ensureContextEnginesInitialized, // 确保上下文引擎已初始化
+  resolveContextEngine, // 根据配置解析具体的上下文引擎实例
 } from "../../context-engine/index.js";
+// ============================================================================
+// 内部模块导入 - 基础设施
+// ============================================================================
+// 退避策略工具：用于过载时的指数退避重试
 import { computeBackoff, sleepWithAbort, type BackoffPolicy } from "../../infra/backoff.js";
+// 安全随机数生成：用于生成诊断 ID 等
 import { generateSecureToken } from "../../infra/secure-random.js";
+// ============================================================================
+// 内部模块导入 - 插件系统
+// ============================================================================
+// 全局钩子运行器：管理和执行插件钩子
 import { getGlobalHookRunner } from "../../plugins/hook-runner-global.js";
+// 插件钩子结果类型
 import type { PluginHookBeforeAgentStartResult } from "../../plugins/types.js";
+// ============================================================================
+// 内部模块导入 - 进程与队列
+// ============================================================================
+// 命令队列：实现 lane 机制的核心函数
 import { enqueueCommandInLane } from "../../process/command-queue.js";
+// ============================================================================
+// 内部模块导入 - 工具函数
+// ============================================================================
+// 消息通道类型检测：判断通道是否支持 Markdown 格式
 import { isMarkdownCapableMessageChannel } from "../../utils/message-channel.js";
+// ============================================================================
+// 内部模块导入 - Agent 相关
+// ============================================================================
+// Agent 目录解析：获取 OpenClaw Agent 的工作目录路径
 import { resolveOpenClawAgentDir } from "../agent-paths.js";
+// Agent 作用域检查：检测是否配置了模型 fallback
 import { hasConfiguredModelFallbacks } from "../agent-scope.js";
+// ============================================================================
+// 内部模块导入 - 认证 Profile 管理
+// ============================================================================
+// 认证 profile 状态管理函数
 import {
-  isProfileInCooldown,
-  type AuthProfileFailureReason,
-  markAuthProfileFailure,
-  markAuthProfileGood,
-  markAuthProfileUsed,
-  resolveProfilesUnavailableReason,
+  isProfileInCooldown, // 检查 profile 是否在冷却中
+  type AuthProfileFailureReason, // profile 失败原因类型
+  markAuthProfileFailure, // 标记 profile 失败
+  markAuthProfileGood, // 标记 profile 健康
+  markAuthProfileUsed, // 更新 profile 最后使用时间
+  resolveProfilesUnavailableReason, // 解析所有 profile 不可用的原因
 } from "../auth-profiles.js";
+// ============================================================================
+// 内部模块导入 - 上下文窗口管理
+// ============================================================================
+// 上下文窗口保护相关常量和函数
 import {
-  CONTEXT_WINDOW_HARD_MIN_TOKENS,
-  CONTEXT_WINDOW_WARN_BELOW_TOKENS,
-  evaluateContextWindowGuard,
-  resolveContextWindowInfo,
+  CONTEXT_WINDOW_HARD_MIN_TOKENS, // 硬性最小 token 数
+  CONTEXT_WINDOW_WARN_BELOW_TOKENS, // 警告阈值
+  evaluateContextWindowGuard, // 评估上下文窗口是否足够
+  resolveContextWindowInfo, // 解析有效的上下文窗口信息
 } from "../context-window-guard.js";
+// ============================================================================
+// 内部模块导入 - 默认值
+// ============================================================================
+// 系统默认值常量
 import { DEFAULT_CONTEXT_TOKENS, DEFAULT_MODEL, DEFAULT_PROVIDER } from "../defaults.js";
+// ============================================================================
+// 内部模块导入 - 错误处理
+// ============================================================================
+// Failover 错误类型和状态解析
 import { FailoverError, resolveFailoverStatus } from "../failover-error.js";
+// ============================================================================
+// 内部模块导入 - 模型认证
+// ============================================================================
+// 模型认证相关函数
 import {
-  ensureAuthProfileStore,
-  getApiKeyForModel,
-  resolveAuthProfileOrder,
-  type ResolvedProviderAuth,
+  ensureAuthProfileStore, // 确保认证 profile 存储已加载
+  getApiKeyForModel, // 获取模型的 API Key
+  resolveAuthProfileOrder, // 解析 profile 轮换顺序
+  type ResolvedProviderAuth, // 解析后的认证信息类型
 } from "../model-auth.js";
+// ============================================================================
+// 内部模块导入 - 模型选择
+// ============================================================================
+// 提供商 ID 标准化：统一大小写、别名等
 import { normalizeProviderId } from "../model-selection.js";
+// 确保 models.json 配置文件存在
 import { ensureOpenClawModelsJson } from "../models-config.js";
+// ============================================================================
+// 内部模块导入 - Pi 嵌入式辅助函数
+// ============================================================================
+// 错误分类、格式化和检测函数
 import {
-  formatBillingErrorMessage,
-  classifyFailoverReason,
-  formatAssistantErrorText,
-  isAuthAssistantError,
-  isBillingAssistantError,
-  isCompactionFailureError,
-  isLikelyContextOverflowError,
-  isFailoverAssistantError,
-  isFailoverErrorMessage,
-  parseImageSizeError,
-  parseImageDimensionError,
-  isRateLimitAssistantError,
-  isTimeoutErrorMessage,
-  pickFallbackThinkingLevel,
-  type FailoverReason,
+  formatBillingErrorMessage, // 格式化计费错误消息
+  classifyFailoverReason, // 分类 failover 原因
+  formatAssistantErrorText, // 格式化 assistant 错误文本
+  isAuthAssistantError, // 检测认证错误
+  isBillingAssistantError, // 检测计费错误
+  isCompactionFailureError, // 检测压缩失败错误
+  isLikelyContextOverflowError, // 检测上下文溢出错误
+  isFailoverAssistantError, // 检测需要 failover 的错误
+  isFailoverErrorMessage, // 检测 failover 错误消息
+  parseImageSizeError, // 解析图片大小错误
+  parseImageDimensionError, // 解析图片尺寸错误
+  isRateLimitAssistantError, // 检测速率限制错误
+  isTimeoutErrorMessage, // 检测超时错误消息
+  pickFallbackThinkingLevel, // 选择降级的思考级别
+  type FailoverReason, // failover 原因类型
 } from "../pi-embedded-helpers.js";
+// ============================================================================
+// 内部模块导入 - 运行时插件
+// ============================================================================
+// 确保运行时插件已加载
 import { ensureRuntimePluginsLoaded } from "../runtime-plugins.js";
+// ============================================================================
+// 内部模块导入 - 用量统计
+// ============================================================================
+// 用量计算和标准化函数
 import { derivePromptTokens, normalizeUsage, type UsageLike } from "../usage.js";
+// ============================================================================
+// 内部模块导入 - 工作区
+// ============================================================================
+// 工作区解析和标识符脱敏
 import { redactRunIdentifier, resolveRunWorkspaceDir } from "../workspace-run.js";
+// ============================================================================
+// 本地模块导入 - Lane 管理
+// ============================================================================
+// Lane 解析函数：用于队列调度
 import { resolveGlobalLane, resolveSessionLane } from "./lanes.js";
+// ============================================================================
+// 本地模块导入 - 日志
+// ============================================================================
+// 本模块的日志记录器
 import { log } from "./logger.js";
+// ============================================================================
+// 本地模块导入 - 模型解析
+// ============================================================================
+// 模型解析函数：根据 provider/modelId 获取完整模型配置
 import { resolveModel } from "./model.js";
+// ============================================================================
+// 本地模块导入 - 运行尝试
+// ============================================================================
+// 单次运行尝试函数：执行实际的模型 API 调用
 import { runEmbeddedAttempt } from "./run/attempt.js";
+// Failover 决策日志记录器
 import { createFailoverDecisionLogger } from "./run/failover-observation.js";
+// 运行参数类型定义
 import type { RunEmbeddedPiAgentParams } from "./run/params.js";
+// 响应 payload 构建函数
 import { buildEmbeddedRunPayloads } from "./run/payloads.js";
+// ============================================================================
+// 本地模块导入 - Tool Result 截断
+// ============================================================================
+// Tool result 截断相关函数
 import {
-  truncateOversizedToolResultsInSession,
-  sessionLikelyHasOversizedToolResults,
+  truncateOversizedToolResultsInSession, // 截断会话中过大的 tool result
+  sessionLikelyHasOversizedToolResults, // 检测是否存在过大的 tool result
 } from "./tool-result-truncation.js";
+// ============================================================================
+// 本地模块导入 - 类型定义
+// ============================================================================
+// 运行结果和元数据类型
 import type { EmbeddedPiAgentMeta, EmbeddedPiRunResult } from "./types.js";
+// 错误描述工具函数
 import { describeUnknownError } from "./utils.js";
 
 /** API Key 信息类型别名，包含 apiKey、profileId、mode 等认证相关字段 */
